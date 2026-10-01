@@ -1,0 +1,25 @@
+{
+  "name": "emailing",
+  "version": "1.0.0",
+  "description": "End-to-end email marketing system: drag & drop / HTML builder, list import & lead finder, campaigns, tracking, reply detection and automations.",
+  "main": "src/server.js",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --no-warnings=ExperimentalWarning src/server.js",
+    "dev": "node --no-warnings=ExperimentalWarning --watch src/server.js",
+    "test": "node --no-warnings=ExperimentalWarning --test \"test/**/*.test.js\""
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "csv-parse": "^7.0.3",
+    "express": "^5.2.1",
+    "imapflow": "^2.2.0",
+    "mailparser": "^3.9.33",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.0.13"
+  }
+}
