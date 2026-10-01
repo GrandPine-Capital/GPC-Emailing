@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Emailing Portal</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✉️</text></svg>">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div id="signin" class="signin">
+    <div class="signin-card">
+      <div class="brand-lg">✉️ Emailing Portal</div>
+      <p class="muted" id="signin-msg">Sign in with your Google account to continue.</p>
+      <button class="btn primary" id="google-signin" style="display:none">Sign in with Google</button>
+      <form id="emu-signin" style="display:none;margin-top:16px;text-align:left">
+        <p class="hint">Emulator mode: sign in with any email.</p>
+        <div class="field"><input type="email" id="emu-email" placeholder="you@example.com" required></div>
+        <button class="btn" type="submit">Sign in (emulator)</button>
+      </form>
+      <button class="btn" id="signout-denied" style="display:none;margin-top:12px">Sign out</button>
+    </div>
+  </div>
+  <div class="layout" id="layout" style="display:none">
+    <aside class="sidebar">
+      <div class="brand">✉️ Emailing</div>
+      <nav class="nav" id="nav">
+        <a href="#/dashboard" data-nav="dashboard"><span class="ico">📊</span>Dashboard</a>
+        <a href="#/templates" data-nav="templates"><span class="ico">🎨</span>Templates</a>
+        <a href="#/campaigns" data-nav="campaigns"><span class="ico">🚀</span>Campaigns</a>
+        <a href="#/automations" data-nav="automations"><span class="ico">⚡</span>Automations</a>
+        <a href="#/contacts" data-nav="contacts"><span class="ico">👥</span>Contacts</a>
+        <a href="#/lists" data-nav="lists"><span class="ico">🗂️</span>Lists</a>
+        <a href="#/leads" data-nav="leads"><span class="ico">🔎</span>Lead Finder</a>
+        <a href="#/replies" data-nav="replies"><span class="ico">💬</span>Replies</a>
+        <a href="#/settings" data-nav="settings"><span class="ico">⚙️</span>Settings</a>
+      </nav>
+      <div class="userbox"><span id="user-email"></span><button class="btn sm" id="signout">Sign out</button></div>
+    </aside>
+    <main class="main" id="view"></main>
+  </div>
+  <div id="toasts"></div>
+  <script src="/shared/render-blocks.js"></script>
+  <script src="/shared/email-core.js"></script>
+  <script src="/shared/catalog.js"></script>
+  <script src="/js/app.js"></script>
+  <script src="/js/builder.js"></script>
+  <script src="/js/views.js"></script>
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

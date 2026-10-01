@@ -1,0 +1,46 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Dashboard users: signed in with Google and listed in /admins/{email}.
+    // The Apps Script worker uses the project owner's credentials and is not
+    // subject to these rules. The first admin is created by setup().
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()));
+    }
+
+    function isToken(t) {
+      return t is string && t.matches('^[a-f0-9]{24}$');
+    }
+
+    match /{document=**} {
+      allow read, write: if isAdmin();
+    }
+
+    // Public click-redirect page (r.html) resolves link keys created by the worker.
+    match /links/{key} {
+      allow get: if true;
+    }
+
+    // Public pages record clicks and unsubscribe requests; the worker processes them.
+    match /clicks/{id} {
+      allow create: if request.resource.data.keys().hasOnly(['token', 'k', 'created_at'])
+        && isToken(request.resource.data.token)
+        && isToken(request.resource.data.k)
+        && request.resource.data.created_at is string;
+    }
+    match /unsubscribes/{id} {
+      allow create: if request.resource.data.keys().hasOnly(['token', 'created_at'])
+        && isToken(request.resource.data.token)
+        && request.resource.data.created_at is string;
+    }
+
+    // Let a signed-in user check whether they are an admin.
+    match /admins/{email} {
+      allow get: if request.auth != null && request.auth.token.email.lower() == email;
+    }
+  }
+}

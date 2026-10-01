@@ -1,5 +1,6 @@
 node_modules/
-data/*.db
-data/*.db-*
 .env
-data/uploads/
+.firebase/
+*.log
+apps-script/.clasp.json
+test/e2e/.cache/
