@@ -84,6 +84,7 @@ var Replies = (function () {
     if (!c || c.status === 'bounced') return false;
     FS.update('contacts/' + key, { status: 'bounced', bounced_at: nowIso() });
     Automations.stopRunsFor(key);
+    Automations.fire('bounced', { contactId: key });
     return true;
   }
 

@@ -50,6 +50,7 @@ var Tracking = (function () {
     if (messageDoc && messageDoc.campaign_id) ops.push({ transform: 'campaigns/' + messageDoc.campaign_id, increment: { 'stats.unsubscribed': 1 } });
     FS.commit(ops);
     Automations.stopRunsFor(contactId);
+    Automations.fire('unsubscribed', { contactId: contactId, campaignId: messageDoc ? messageDoc.campaign_id : null, messageId: messageDoc ? messageDoc.id : null });
     return true;
   }
 

@@ -223,7 +223,7 @@ test('web app: admin actions require a valid admin ID token', () => {
   gas.setup();
   const call = (body) => JSON.parse(gas.doPost({ parameter: {}, postData: { contents: JSON.stringify(body) } }).content);
   assert.equal(call({ action: 'status' }).ok, false);
-  assert.match(call({ action: 'status', idToken: 'stranger-token' }).error, /not an admin/);
+  assert.match(call({ action: 'status', idToken: 'stranger-token' }).error, /not a user of this portal/);
   assert.match(call({ action: 'status', idToken: 'forged' }).error, /Invalid or expired/);
   const st = call({ action: 'status', idToken: 'admin-token' });
   assert.equal(st.ok, true);
@@ -299,4 +299,163 @@ test('Firestore client quotes field paths that start with a digit (link keys are
   const c = store.doc('campaigns/C');
   assert.deepEqual(c.links, { '0abc': { url: 'https://x.test', clicks: 1 }, '1def': { url: 'https://y.test' } });
   assert.equal(c.stats.clicked, 1);
+});
+
+// ------------------------------------------------------------------ v3 features
+function webRecorder() {
+  const calls = [];
+  const web = (url, opts) => {
+    if (url.startsWith('https://api.chatdaddy.tech/') || url.startsWith('https://graph.facebook.com/')) {
+      calls.push({ url, method: opts.method, headers: opts.headers || {}, body: opts.payload ? JSON.parse(opts.payload) : null });
+      return { code: 200, body: '{"ok":true}', headers: { 'Content-Type': 'application/json' } };
+    }
+    return null;
+  };
+  return { calls, web };
+}
+
+test('sender identities: send from a verified Gmail alias, reject unverified ones', () => {
+  const { gas, store, sent } = createGas();
+  gas.setup();
+  assert.deepEqual(store.doc('settings/senders').list.map((s) => [s.email, s.verified]),
+    [['owner@gmail.test', true], ['sales@acme.test', true], ['pending@acme.test', false]]);
+  store.put('lists/L', { name: 'L' });
+  contact(store, 'a@a.com', { list_ids: ['L'] });
+  const tpl = templateId(store, 'Welcome');
+  store.put('campaigns/C1', { name: 'C1', subject: 'S', template_id: tpl, list_ids: ['L'], from_email: 'sales@acme.test', status: 'launching', stats: {}, created_at: now() });
+  gas.tick();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].headers.from, '"Acme Sales" <sales@acme.test>');
+  contact(store, 'b@b.com', { list_ids: ['M'] });
+  store.put('campaigns/C2', { name: 'C2', subject: 'S', template_id: tpl, list_ids: ['M'], from_email: 'pending@acme.test', status: 'launching', stats: {}, created_at: now() });
+  gas.tick();
+  const failed = store.collection('messages').find((m) => m.campaign_id === 'C2');
+  assert.equal(failed.status, 'failed');
+  assert.match(failed.error, /not a verified "Send mail as" address/);
+  // Default sender from settings applies when the campaign has none.
+  store.put('settings/app', { ...store.doc('settings/app'), default_from_email: 'sales@acme.test', from_name: 'Acme' });
+  gas.CONFIG.reset(); // each Apps Script execution starts with fresh settings
+  const r = gas.sendTest({ template_id: tpl, email: 'qa@x.test' });
+  assert.equal(r.ok, true);
+  // Alias display name from Gmail wins over the global From name.
+  assert.equal(sent[sent.length - 1].headers.from, '"Acme Sales" <sales@acme.test>');
+});
+
+test('WhatsApp automation: tag added -> ChatDaddy contact sync -> WhatsApp message (ChatDaddy and Cloud API)', () => {
+  const { calls, web } = webRecorder();
+  const { gas, store } = createGas({ web });
+  gas.setup();
+  store.put('settings/app', { ...store.doc('settings/app'), default_country_code: '60' });
+  store.put('settings/secrets', { ...store.doc('settings/secrets'), chatdaddy_token: 'cd-token', whatsapp_token: 'meta-token' });
+  store.put('settings/app', { ...store.doc('settings/app'), whatsapp_phone_number_id: '1234567890' });
+  store.put('automations/WA', {
+    name: 'Hot lead WhatsApp', trigger_type: 'tag_added', trigger_config: { tag: 'hot-lead' }, status: 'active', runs: {}, created_at: now(),
+    steps: [
+      { type: 'chatdaddy_contact', tags: 'email-lead, {{company}}' },
+      { type: 'send_whatsapp', provider: 'chatdaddy', text: 'Hi {{first_name|there}}, thanks for your interest!' },
+      { type: 'send_whatsapp', provider: 'cloud', template_name: 'follow_up', language: 'en', params: '{{first_name}} | {{company}}' },
+      { type: 'stop_if', condition: 'has_tag', tag: 'vip' },
+      { type: 'add_tag', tag: 'whatsapped' },
+    ],
+  });
+  contact(store, 'lee@acme.com', { first_name: 'Lee', company: 'Acme', phone: '012-345 6789' });
+  store.put('jobs/t1', { type: 'tags_added', payload: { items: [{ contact_id: 'lee@acme.com', tag: 'hot-lead' }] }, status: 'pending', created_at: now() });
+  gas.tick();
+  const run = store.collection('runs').find((r) => r.automation_id === 'WA');
+  assert.equal(run.status, 'completed', JSON.stringify(run.log));
+  const [upsert, msg, cloud] = calls;
+  assert.equal(upsert.url, 'https://api.chatdaddy.tech/im/contacts/upsert');
+  assert.equal(upsert.headers.Authorization, 'Bearer cd-token');
+  assert.deepEqual(upsert.body.contacts[0], { phoneNumber: '60123456789', name: 'Lee', tags: [{ name: 'email-lead' }, { name: 'Acme' }], email: 'lee@acme.com' });
+  assert.equal(msg.url, 'https://api.chatdaddy.tech/im/messages/random/60123456789');
+  assert.deepEqual(msg.body, { text: 'Hi Lee, thanks for your interest!' });
+  assert.equal(cloud.url, 'https://graph.facebook.com/v21.0/1234567890/messages');
+  assert.equal(cloud.headers.Authorization, 'Bearer meta-token');
+  assert.deepEqual(cloud.body.template, { name: 'follow_up', language: { code: 'en' }, components: [{ type: 'body', parameters: [{ type: 'text', text: 'Lee' }, { type: 'text', text: 'Acme' }] }] });
+  assert.ok(store.doc('contacts/lee@acme.com').tags.includes('whatsapped'));
+  assert.equal(store.collection('whatsapp').filter((w) => w.direction === 'out').length, 2);
+});
+
+test('inbound ChatDaddy webhook: WhatsApp reply creates contact, logs reply, fires automation, stops sequences', () => {
+  const { calls, web } = webRecorder();
+  const { gas, store } = createGas({ web });
+  gas.setup();
+  const secret = store.doc('settings/secrets').webhook_secret;
+  assert.match(secret, /^[a-f0-9]{48}$/);
+  store.put('settings/secrets', { ...store.doc('settings/secrets'), chatdaddy_token: 'cd' });
+  store.put('settings/app', { ...store.doc('settings/app'), default_country_code: '60' });
+  contact(store, 'amy@x.com', { first_name: 'Amy', phone: '+60 11-2222 3333', phone_key: '601122223333' });
+  store.put('automations/SEQ', { name: 'Seq', trigger_type: 'manual', trigger_config: { stop_on_reply: true }, status: 'active', runs: {}, steps: [{ type: 'wait', amount: 2, unit: 'days' }], created_at: now() });
+  store.put('automations/WR', {
+    name: 'WhatsApp reply', trigger_type: 'whatsapp_received', trigger_config: { keywords: 'price' }, status: 'active', runs: {}, created_at: now(),
+    steps: [{ type: 'add_tag', tag: 'wa-interested' }, { type: 'notify', channel: 'whatsapp', whatsapp: '+60 19-999 0000', provider: 'chatdaddy' }],
+  });
+  store.put('jobs/e', { type: 'enroll', payload: { automation_id: 'SEQ', contact_ids: ['amy@x.com'] }, status: 'pending', created_at: now() });
+  gas.tick();
+  const hook = (body, k = secret) => JSON.parse(gas.doPost({ parameter: { a: 'hook', src: 'chatdaddy', k }, postData: { contents: JSON.stringify(body) } }).content);
+  assert.equal(hook({ event: 'message-insert', data: [] }, 'wrong').ok, false);
+  const payload = {
+    event: 'message-insert',
+    data: [
+      { id: 'M1', chatId: '601122223333', accountId: 'acc1', fromMe: false, text: 'What is the price?' },
+      { id: 'M2', chatId: '60177777777', accountId: 'acc1', fromMe: false, text: 'hello', sender: { name: 'New Person' } },
+      { id: 'M3', chatId: '601122223333', accountId: 'acc1', fromMe: true, text: 'our own message' },
+      { id: 'M4', chatId: '1203630@g.us', accountId: 'acc1', fromMe: false, text: 'group' },
+    ],
+  };
+  assert.deepEqual(hook(payload), { ok: true, handled: 2 });
+  assert.deepEqual(hook(payload), { ok: true, handled: 2 }); // duplicate delivery is harmless
+  const replies = store.collection('replies').filter((r) => r.channel === 'whatsapp');
+  assert.equal(replies.length, 2);
+  assert.equal(store.doc('contacts/wa-60177777777').first_name, 'New');
+  assert.equal(store.collection('runs').find((r) => r.automation_id === 'SEQ').status, 'stopped');
+  gas.tick();
+  assert.ok(store.doc('contacts/amy@x.com').tags.includes('wa-interested'));
+  assert.ok(!(store.doc('contacts/wa-60177777777').tags || []).includes('wa-interested'), 'keyword filter');
+  const notify = calls.find((c) => c.url.endsWith('/60199990000'));
+  assert.match(notify.body.text, /WhatsApp reply/);
+  assert.match(notify.body.text, /What is the price\?/);
+});
+
+test('generic webhook: form submission creates contact in list with tags and fires matching automations', () => {
+  const { gas, store, sent } = createGas();
+  gas.setup();
+  const secret = store.doc('settings/secrets').webhook_secret;
+  const welcome = automationId(store, 'Welcome new subscribers');
+  store.put(`automations/${welcome}`, { ...store.doc(`automations/${welcome}`), status: 'active', trigger_config: { list_id: 'WEB' } });
+  store.put('automations/WH', { name: 'Form', trigger_type: 'webhook_received', trigger_config: { event: 'form_submitted' }, status: 'active', runs: {}, steps: [{ type: 'add_tag', tag: 'form' }], created_at: now() });
+  const out = JSON.parse(gas.doPost({ parameter: { a: 'hook', k: secret }, postData: { contents: JSON.stringify({ email: 'Zed@Z.com', name: 'Zed Ong', company: 'ZCo', tags: ['webinar'], list_id: 'WEB', event: 'form_submitted' }) } }).content);
+  assert.deepEqual(out, { ok: true, contact: 'zed@z.com' });
+  gas.tick();
+  const c = store.doc('contacts/zed@z.com');
+  assert.deepEqual([c.first_name, c.last_name, c.company, c.list_ids], ['Zed', 'Ong', 'ZCo', ['WEB']]);
+  assert.deepEqual(c.tags.sort(), ['form', 'webinar']);
+  assert.ok(sent.some((m) => m.to.includes('zed@z.com') && /Welcome aboard, Zed/.test(m.subject)));
+  // Other events don't match the event filter.
+  JSON.parse(gas.doPost({ parameter: { a: 'hook', k: secret }, postData: { contents: JSON.stringify({ email: 'y@y.com', event: 'other' }) } }).content);
+  gas.tick();
+  assert.ok(!(store.doc('contacts/y@y.com').tags || []).includes('form'));
+});
+
+test('roles: members can use the worker but not admin-only actions', () => {
+  const { gas, store } = createGas();
+  gas.setup();
+  assert.equal(store.doc('admins/owner@gmail.test').role, 'owner');
+  store.put('admins/stranger@gmail.test', { email: 'stranger@gmail.test', role: 'member' });
+  const call = (body) => JSON.parse(gas.doPost({ parameter: {}, postData: { contents: JSON.stringify(body) } }).content);
+  assert.equal(call({ action: 'status', idToken: 'stranger-token' }).ok, true);
+  assert.match(call({ action: 'senders', idToken: 'stranger-token' }).error, /Only admins/);
+  assert.equal(call({ action: 'senders', idToken: 'admin-token' }).senders.length, 3);
+});
+
+test('WhatsApp-only contacts are skipped by email campaigns', () => {
+  const { gas, store, sent } = createGas();
+  gas.setup();
+  store.put('lists/L', { name: 'L' });
+  contact(store, 'wa-60123456789', { email: '', phone_key: '60123456789', list_ids: ['L'] });
+  contact(store, 'real@x.com', { list_ids: ['L'] });
+  store.put('campaigns/C', { name: 'C', subject: 'S', template_id: templateId(store, 'Welcome'), list_ids: ['L'], status: 'launching', stats: {}, created_at: now() });
+  gas.tick();
+  assert.equal(sent.length, 1);
+  assert.equal(store.doc('campaigns/C').stats.total, 1);
 });

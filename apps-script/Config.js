@@ -61,6 +61,12 @@ var CONFIG = (function () {
     per_run_limit: 40,
     dry_run: false,
     crawler_user_agent: 'EmailingLeadFinder/1.0 (Google Apps Script)',
+    default_from_email: '',
+    default_country_code: '',
+    whatsapp_provider: 'chatdaddy',
+    chatdaddy_account_id: 'random',
+    whatsapp_phone_number_id: '',
+    whatsapp_template_language: 'en',
   };
 
   function settings() {

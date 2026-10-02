@@ -11,7 +11,10 @@ A complete email marketing system that runs entirely on Google's free tiers. It 
 | **Campaigns** | Personalisation (`{{first_name\|there}}`, `{{company}}`…), test sends, send now or schedule, daily and per-batch limits, pause and resume. |
 | **Tracking** | Opens, clicks (with a top-links report), replies, one-click unsubscribe (`List-Unsubscribe` + RFC 8058) and bounces. |
 | **Reply detection** | Reads your **Gmail inbox** directly and matches each reply to the email it answers by Gmail thread. No IMAP setup needed. |
-| **Automations** | **Triggers:** email sent, opened, link clicked, **reply received** (optionally filtered by keywords), added to list, manual. **Steps:** wait, send email (optionally threaded as "Re:"), stop if replied / opened / clicked, add or remove tags and lists, update a field, notify your team, webhook. An automation can also stop as soon as the contact replies. |
+| **Automations** | Start from **10 ready-made recipes**, then build visually: a step-by-step flow that reads as a sentence ("When a reply mentions pricing → add tag → WhatsApp my sales team"). **Triggers:** email sent, opened, link clicked, reply received (with keywords), bounced, unsubscribed, added to list, tag added, **WhatsApp message received** (ChatDaddy), **webhook received** (forms, Zapier, CRM), manual. **Steps:** send email (any sender address, optionally threaded), **send WhatsApp** (ChatDaddy or WhatsApp Cloud API), **sync contact to ChatDaddy** with tags, wait, stop if replied / opened / clicked / has tag, add or remove tags and lists, update a field, notify your team by email and/or WhatsApp, call a webhook. |
+| **Team & access** | Invite users as **Admin** (also manages settings and the team) or **Member** (day-to-day work). They sign in with Google, or with an emailed sign-in link if their address isn't a Google account. Firestore rules enforce the roles. |
+| **Sender identities** | Send from any verified Gmail **"Send mail as"** address. Pick a default, or choose per campaign and per automation email. |
+| **Mobile** | Fully responsive, with a hamburger menu, bottom tab bar and phone-sized forms and dialogs. |
 
 ## Architecture (all free)
 
@@ -108,6 +111,32 @@ The dashboard is now at **https://emailing-portal.web.app**. Sign-in won't work 
 5. Open **https://emailing-portal.web.app**, sign in with Google, then go to **Settings**. Check that *Apps Script web app URL* matches the URL from the deployment dialog (it ends in `/exec`; paste it if it's empty), then click **Check worker connection**.
 
 To add more dashboard users, run `addAdmin("colleague@example.com")` in the Apps Script editor, or create a document `admins/<email>` in Firestore.
+
+### Optional: WhatsApp, ChatDaddy and email-link sign-in
+
+- **Email-link sign-in** (for users without a Google account): in Firebase console → Authentication → Sign-in method, enable **Email/Password** and turn on **Email link (passwordless sign-in)**.
+- **ChatDaddy:**
+  1. Create an API token at <https://app.chatdaddy.tech/settings/api> with message and contact scopes.
+  2. Paste it in **Settings → WhatsApp & ChatDaddy** and send yourself a test.
+  3. To receive WhatsApp replies, add the **ChatDaddy webhook URL** from **Settings → Inbound webhooks** as a ChatDaddy webhook for the `message-insert` event.
+- **WhatsApp Cloud API (Meta)**, as an alternative to ChatDaddy: enter the phone number ID and access token. To start conversations, Meta requires pre-approved message templates.
+- Set the **default country code** (for example `60`), so local numbers like `012-345 6789` become `60123456789`.
+
+ChatDaddy and Meta bill their own usage. Everything else in this portal stays on Google's free tiers.
+
+### Upgrading an existing installation
+
+```bash
+cd ~/Emailing && git pull
+npx -y firebase-tools@latest deploy --only hosting,firestore --project emailing-portal
+cd apps-script && npx -y @google/clasp@latest push -f
+npx -y @google/clasp@latest redeploy YOUR_DEPLOYMENT_ID -d "v3"
+```
+
+Then run **`setup()`** once more in the Apps Script editor. It's safe to re-run, and it:
+- marks you as the owner;
+- creates the webhook secret;
+- loads your Gmail sender identities.
 
 ### Updating later
 

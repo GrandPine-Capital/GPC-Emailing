@@ -6,7 +6,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js';
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, connectAuthEmulator,
-  signInWithCredential,
+  signInWithCredential, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink,
 } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
 import {
   initializeFirestore, connectFirestoreEmulator, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc,
@@ -35,4 +35,5 @@ export const fs = {
 };
 export const authApi = {
   GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, signInWithCredential,
+  sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink,
 };

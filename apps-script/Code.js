@@ -8,14 +8,20 @@
  */
 
 // ------------------------------------------------------------------ worker
+/** Per-execution caches (settings, active automations, sender identities). */
+function resetCaches() {
+  CONFIG.reset();
+  Automations.reset();
+  Mailer.reset();
+}
+
 function tick(maxMs) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(1000)) return { skipped: 'busy' };
   const hasTime = deadline(typeof maxMs === 'number' ? maxMs : 4.5 * 60e3);
   const summary = {};
   try {
-    CONFIG.reset();
-    Automations.reset();
+    resetCaches();
     const step = function (name, fn) {
       if (!hasTime()) return;
       try {
@@ -55,6 +61,10 @@ var Jobs = (function () {
       case 'contacts_added':
         // items: [{ contact_id, list_id }] (Firestore cannot store nested arrays)
         (p.items || []).forEach(function (it) { Automations.fire('contact_added', { contactId: it.contact_id, listId: String(it.list_id) }); });
+        return { fired: (p.items || []).length };
+      case 'tags_added':
+        // items: [{ contact_id, tag }]
+        (p.items || []).forEach(function (it) { Automations.fire('tag_added', { contactId: it.contact_id, tag: String(it.tag) }); });
         return { fired: (p.items || []).length };
       case 'log_reply': {
         const r = Replies.record({ from: p.from, subject: p.subject, text: p.text });
@@ -100,7 +110,8 @@ function sendTest(p) {
   });
   const r = Mailer.send({
     to: p.email, subject: email.subject, html: email.html, text: email.text,
-    fromName: campaign && campaign.from_name, replyTo: campaign && campaign.reply_to, force: true,
+    fromName: campaign && campaign.from_name, fromEmail: (campaign && campaign.from_email) || p.from_email,
+    replyTo: campaign && campaign.reply_to, force: true,
   });
   return { ok: true, dryRun: r.dryRun };
 }
@@ -111,6 +122,7 @@ function json(obj) {
 }
 
 function doGet(e) {
+  resetCaches();
   const p = (e && e.parameter) || {};
   try {
     if (p.a === 'o') {
@@ -128,7 +140,16 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  resetCaches();
   const p = (e && e.parameter) || {};
+  // Inbound webhooks (ChatDaddy, forms, Zapier…), authenticated by the webhook secret.
+  if (p.a === 'hook') {
+    try {
+      return json(Inbound.handle(p, e && e.postData ? e.postData.contents : ''));
+    } catch (err) {
+      return json({ ok: false, error: String(err.message || err) });
+    }
+  }
   // RFC 8058 one-click unsubscribe (List-Unsubscribe-Post) from mailbox providers.
   if (p.a === 'u1') {
     Tracking.unsubscribe(p.t);
@@ -141,8 +162,19 @@ function doPost(e) {
     return json({ ok: false, error: 'Invalid JSON' });
   }
   try {
-    const admin = verifyAdmin(body.idToken);
+    const user = verifyAdmin(body.idToken);
+    const admin = user.email;
+    const requireAdmin = function () {
+      if (user.role === 'member') throw new Error('Only admins can do this');
+    };
     switch (body.action) {
+      case 'senders':
+        requireAdmin();
+        return json({ ok: true, senders: Integrations.refreshSenders() });
+      case 'test_whatsapp':
+        requireAdmin();
+        Integrations.sendWhatsApp(body.phone, { provider: body.provider, text: body.text || 'Test message from your Emailing Portal ✅' });
+        return json({ ok: true });
       case 'kick':
         return json({ ok: true, summary: tick(Math.min(Number(body.maxMs) || 60e3, 4.5 * 60e3)) });
       case 'test_email':
@@ -171,8 +203,9 @@ function verifyAdmin(idToken) {
   const user = res.getResponseCode() === 200 ? (JSON.parse(res.getContentText()).users || [])[0] : null;
   if (!user || !user.email) throw new Error('Invalid or expired sign-in, please reload the page');
   const email = String(user.email).toLowerCase();
-  if (!FS.get('admins/' + email)) throw new Error(email + ' is not an admin');
-  return email;
+  const member = FS.get('admins/' + email);
+  if (!member) throw new Error(email + ' is not a user of this portal');
+  return { email: email, role: member.role || 'owner' };
 }
 
 /** Store an uploaded image in Drive and return a public URL usable in emails. */
@@ -194,7 +227,9 @@ function upload(body) {
  */
 function setup() {
   const owner = String(CONFIG.senderEmail()).toLowerCase();
-  if (!FS.get('admins/' + owner)) FS.set('admins/' + owner, { email: owner, created_at: nowIso() });
+  const existing = FS.get('admins/' + owner);
+  if (!existing) FS.set('admins/' + owner, { email: owner, role: 'owner', name: '', created_at: nowIso() });
+  else if (!existing.role) FS.update('admins/' + owner, { role: 'owner' });
 
   const current = FS.get('settings/app') || {};
   const defaults = Object.assign({}, CONFIG.DEFAULT_SETTINGS, { site_url: 'https://' + CONFIG.projectId() + '.web.app' });
@@ -208,6 +243,12 @@ function setup() {
   if (webAppUrl) patch.tracking_url = webAppUrl;
   if (Object.keys(patch).length) FS.set('settings/app', patch, { merge: true });
   if (!FS.get('settings/secrets')) FS.set('settings/secrets', { hunter_api_key: '', apollo_api_key: '', google_cse_key: '', google_cse_cx: '' });
+  if (!(FS.get('settings/secrets') || {}).webhook_secret) FS.set('settings/secrets', { webhook_secret: newToken() + newToken() }, { merge: true });
+  try {
+    Integrations.refreshSenders();
+  } catch (e) {
+    console.warn('Could not read Gmail sender identities: ' + e.message);
+  }
   if (!FS.get('meta/facets')) FS.set('meta/facets', { countries: [], industries: [], tags: [] });
   CONFIG.reset();
 
@@ -226,9 +267,9 @@ function setup() {
 }
 
 /** Add another admin who may sign in to the dashboard. */
-function addAdmin(email) {
+function addAdmin(email, role) {
   email = String(email || '').trim().toLowerCase();
   if (!EmailCore.isEmail(email)) throw new Error('Pass an email address');
-  FS.set('admins/' + email, { email: email, created_at: nowIso() });
+  FS.set('admins/' + email, { email: email, role: role === 'member' ? 'member' : 'admin', name: '', created_at: nowIso() });
   return email;
 }

@@ -6,7 +6,7 @@ var Campaigns = (function () {
     const out = [];
     (campaign.list_ids || []).forEach(function (listId) {
       FS.query('contacts', { where: [['list_ids', 'array-contains', String(listId)]] }).forEach(function (c) {
-        if (c.status === 'subscribed' && !seen[c.id]) {
+        if (c.status === 'subscribed' && EmailCore.isEmail(c.email) && !seen[c.id]) {
           seen[c.id] = true;
           out.push(c);
         }

@@ -28,8 +28,8 @@
     const max = Math.max(1, ...s.daily.map((d) => Number(d.sent) + Number(d.opens) + Number(d.clicks) + Number(d.replies)));
     const colors = { sent: '#93c5fd', opens: '#2563eb', clicks: '#16a34a', replies: '#d97706' };
     root.innerHTML = `
-      <div class="page-head"><h1>Dashboard</h1>
-        <div class="actions"><a class="btn" href="#/leads">🔎 Find leads</a><a class="btn" href="#/templates/new-dragdrop">🎨 New template</a><a class="btn primary" href="#/campaigns/new">🚀 New campaign</a></div></div>
+      <div class="page-head"><div><h1>Dashboard</h1><div class="subtitle">Your email, automation and lead activity at a glance.</div></div>
+        <div class="actions"><a class="btn" href="#/leads">${App.icon('search', 17)}Find leads</a><a class="btn" href="#/templates/new-dragdrop">${App.icon('templates', 17)}New template</a><a class="btn primary" href="#/campaigns/new">${App.icon('rocket', 17)}New campaign</a></div></div>
       ${workerBanner(meta)}${dryRunBanner(meta)}
       <div class="grid cols-4">
         <div class="card stat"><div class="label">Contacts</div><div class="value">${s.contacts}</div><div class="sub">${s.subscribed} subscribed · ${s.lists} lists</div></div>
@@ -61,8 +61,8 @@
   route(/^#\/templates$/, async (root) => {
     const list = await api.get('/templates');
     root.innerHTML = `
-      <div class="page-head"><h1>Templates</h1>
-        <div class="actions"><a class="btn" href="#/templates/new-html">&lt;/&gt; New HTML template</a><a class="btn primary" href="#/templates/new-dragdrop">＋ New drag &amp; drop template</a></div></div>
+      <div class="page-head"><div><h1>Templates</h1><div class="subtitle">Design emails with drag &amp; drop or HTML. Standard templates included.</div></div>
+        <div class="actions"><a class="btn" href="#/templates/new-html">${App.icon('code', 17)}New HTML template</a><a class="btn primary" href="#/templates/new-dragdrop">${App.icon('plus', 17)}New drag &amp; drop template</a></div></div>
       <div class="tpl-grid">${list.map((t) => `
         <div class="tpl-card" data-id="${t.id}">
           <div class="tpl-thumb" data-open><iframe loading="lazy" sandbox="" data-html="${t.id}"></iframe></div>
@@ -87,7 +87,7 @@
   route(/^#\/campaigns$/, async (root) => {
     const list = await api.get('/campaigns');
     root.innerHTML = `
-      <div class="page-head"><h1>Campaigns</h1><div class="actions"><a class="btn primary" href="#/campaigns/new">＋ New campaign</a></div></div>
+      <div class="page-head"><div><h1>Campaigns</h1><div class="subtitle">Send personalised emails to your lists and track opens, clicks and replies.</div></div><div class="actions"><a class="btn primary" href="#/campaigns/new">${App.icon('plus', 17)}New campaign</a></div></div>
       <div class="card table-wrap">${list.length ? `<table class="data"><thead><tr><th>Name</th><th>Status</th><th>Template</th><th class="right">Sent</th><th class="right">Opens</th><th class="right">Clicks</th><th class="right">Replies</th><th>Date</th><th></th></tr></thead><tbody>
         ${list.map((c) => `<tr><td><a href="#/campaigns/${c.id}">${esc(c.name)}</a><div class="muted" style="font-size:12px">${esc(c.subject)}</div></td>
           <td>${statusBadge(c.status)}</td><td>${esc(c.template_name || '—')}</td>
@@ -105,12 +105,12 @@
   route(/^#\/campaigns\/(new|[\w-]+)(?:\?template=([\w-]+))?$/, async (root, id, presetTemplate) => {
     const [meta, templates, lists, settings] = await Promise.all([App.getMeta(), api.get('/templates'), api.get('/lists'), api.get('/settings')]);
     let c = id === 'new'
-      ? { id: null, name: '', subject: '', preheader: '', template_id: presetTemplate || '', from_name: '', reply_to: '', list_ids: [], status: 'draft' }
+      ? { id: null, name: '', subject: '', preheader: '', template_id: presetTemplate || '', from_name: '', from_email: '', reply_to: '', list_ids: [], status: 'draft' }
       : await api.get(`/campaigns/${id}`);
     if (id === 'new' && presetTemplate) c.subject = templates.find((t) => String(t.id) === presetTemplate)?.subject || '';
     if (['launching', 'sending', 'sent', 'paused'].includes(c.status)) return renderReport(root, c);
     root.innerHTML = `
-      <div class="page-head"><div><a href="#/campaigns">← Campaigns</a><h1>${c.id ? esc(c.name) : 'New campaign'} ${statusBadge(c.status)}</h1></div>
+      <div class="page-head"><div><a class="back" href="#/campaigns">${App.icon('chevron-left', 16)}Campaigns</a><h1>${c.id ? esc(c.name) : 'New campaign'} ${statusBadge(c.status)}</h1></div>
         <div class="actions">${c.status === 'scheduled' ? '<button class="btn" id="unschedule">Cancel schedule</button>' : ''}
           <button class="btn" id="save">Save draft</button><button class="btn" id="test">Send test</button><button class="btn" id="schedule">Schedule…</button><button class="btn success" id="send">Send now</button></div></div>
       ${workerBanner(meta)}${dryRunBanner(meta)}
@@ -123,7 +123,9 @@
           <div class="field"><label>Subject line</label><input type="text" name="subject" value="${esc(c.subject)}" placeholder="{{first_name}}, ..."></div>
           <div class="field"><label>Preheader <span class="hint">(preview text in inbox)</span></label><input type="text" name="preheader" value="${esc(c.preheader)}"></div>
           <div class="row"><div class="field"><label>From name</label><input type="text" name="from_name" value="${esc(c.from_name)}" placeholder="${esc(settings.from_name)}"></div>
-            <div class="field"><label>From email</label><input type="email" value="${esc(meta.account || 'your Gmail account')}" disabled></div></div>
+            <div class="field"><label>From email</label><select name="from_email"><option value="">${esc(settings.default_from_email || meta.account || 'Default sender')} (default)</option>
+              ${(settings.senders || []).filter((x) => x.verified && !x.primary).map((x) => `<option value="${esc(x.email)}" ${c.from_email === x.email ? 'selected' : ''}>${esc(x.email)}${x.name ? ` — ${esc(x.name)}` : ''}</option>`).join('')}</select>
+              <div class="hint">More addresses: <a href="#/settings">Settings → Sender identities</a>.</div></div></div>
           <div class="field"><label>Reply-to <span class="hint">(optional; replies are detected in the Gmail inbox)</span></label><input type="email" name="reply_to" value="${esc(c.reply_to)}" placeholder="${esc(settings.reply_to || meta.account || '')}"></div>
           <h2 style="margin-top:20px">2. Recipients</h2>
           ${lists.length ? lists.map((l) => `<label class="check"><input type="checkbox" name="list_ids" data-group value="${l.id}" ${c.list_ids.map(String).includes(String(l.id)) ? 'checked' : ''}> ${esc(l.name)} <span class="muted">(${l.subscribed || 0})</span></label>`).join('') : '<p class="muted">No lists yet. <a href="#/lists">Create a list</a> and add contacts.</p>'}
@@ -200,9 +202,9 @@
       const msgs = await api.get(`/campaigns/${c.id}/messages${filter ? `?filter=${filter}` : ''}`);
       const done = s.total ? Math.round(((s.total - s.queued) / s.total) * 100) : 100;
       root.innerHTML = `
-        <div class="page-head"><div><a href="#/campaigns">← Campaigns</a><h1>${esc(c.name)} ${statusBadge(c.status)}</h1><div class="muted">${esc(c.subject)}</div></div>
+        <div class="page-head"><div><a class="back" href="#/campaigns">${App.icon('chevron-left', 16)}Campaigns</a><h1>${esc(c.name)} ${statusBadge(c.status)}</h1><div class="muted">${esc(c.subject)}</div></div>
           <div class="actions">${c.status === 'sending' ? '<button class="btn" id="pause">Pause</button>' : ''}${c.status === 'paused' ? '<button class="btn primary" id="resume">Resume</button>' : ''}
-          <button class="btn" id="dup">Duplicate</button><a class="btn" href="#/automations/new?campaign=${c.id}">⚡ Add follow-up automation</a></div></div>
+          <button class="btn" id="dup">Duplicate</button><a class="btn" href="#/automations/new?campaign=${c.id}">${App.icon('zap', 17)}Add follow-up automation</a></div></div>
         ${c.status === 'launching' ? '<div class="banner info">Preparing recipients… the worker picks this up within a few minutes.</div>' : ''}
         ${c.status === 'sending' || c.status === 'paused' ? `<div class="card"><div class="row" style="justify-content:space-between"><strong>Sending progress</strong><span>${s.total - s.queued} / ${s.total}</span></div><div class="progress" style="margin-top:8px"><div style="width:${done}%"></div></div></div>` : ''}
         <div class="grid cols-4">
@@ -229,175 +231,14 @@
     return () => clearInterval(timer);
   }
 
-  // ================================================================ Automations
-  route(/^#\/automations$/, async (root) => {
-    const [meta, list] = await Promise.all([App.getMeta(), api.get('/automations')]);
-    root.innerHTML = `
-      <div class="page-head"><h1>Automations</h1><div class="actions"><a class="btn primary" href="#/automations/new">＋ New automation</a></div></div>
-      ${workerBanner(meta)}
-      <div class="card table-wrap">${list.length ? `<table class="data"><thead><tr><th>Name</th><th>Trigger</th><th>Steps</th><th>Runs</th><th>Status</th><th></th></tr></thead><tbody>
-      ${list.map((a) => `<tr><td><a href="#/automations/${a.id}">${esc(a.name)}</a></td><td>${esc(a.trigger_type.replace('_', ' '))}${a.trigger_config.keywords ? `<div class="muted" style="font-size:12px">keywords: ${esc(a.trigger_config.keywords)}</div>` : ''}</td>
-        <td>${a.steps.map((s) => `<span class="tag">${esc(s.type.replace(/_/g, ' '))}</span>`).join(' ')}</td>
-        <td class="nowrap">${Object.entries(a.runs).map(([k, v]) => `${v} ${k}`).join(' · ') || '—'}</td>
-        <td>${statusBadge(a.status)}</td>
-        <td class="nowrap"><button class="btn sm" data-toggle="${a.id}" data-status="${a.status}">${a.status === 'active' ? 'Pause' : 'Activate'}</button> <button class="btn sm danger" data-del="${a.id}">Delete</button></td></tr>`).join('')}
-      </tbody></table>` : '<div class="empty">No automations yet.</div>'}</div>`;
-    root.querySelectorAll('[data-toggle]').forEach((b) => (b.onclick = async () => {
-      await api.post(`/automations/${b.dataset.toggle}/${b.dataset.status === 'active' ? 'pause' : 'activate'}`);
-      App.navigate();
-    }));
-    root.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
-      if (await confirmDialog('Delete this automation and its run history?')) { await api.del(`/automations/${b.dataset.del}`); App.navigate(); }
-    }));
-  });
-
-  route(/^#\/automations\/(new|[\w-]+)(?:\?campaign=([\w-]+))?$/, async (root, id, presetCampaign) => {
-    const [meta, templates, lists, campaignsList] = await Promise.all([App.getMeta(), api.get('/templates'), api.get('/lists'), api.get('/campaigns')]);
-    const a = id === 'new'
-      ? {
-        id: null, name: presetCampaign ? 'Follow-up sequence' : '', status: 'paused', allow_reentry: 0,
-        trigger_type: presetCampaign ? 'email_sent' : 'reply_received',
-        trigger_config: presetCampaign ? { campaign_id: presetCampaign, stop_on_reply: true } : {},
-        steps: presetCampaign ? [{ type: 'wait', amount: 3, unit: 'days' }, { type: 'stop_if', condition: 'replied' }, { type: 'send_email', template_id: '', reply_in_thread: true }] : [],
-        recent: [], runs: {},
-      }
-      : await api.get(`/automations/${id}`);
-
-    const triggerFields = () => {
-      const cfg = a.trigger_config;
-      const campaignSel = `<div class="field"><label>Campaign <span class="hint">(optional)</span></label><select data-cfg="campaign_id">${opts(campaignsList, cfg.campaign_id, { blank: 'Any campaign' })}</select></div>`;
-      const templateSel = `<div class="field"><label>Template <span class="hint">(optional)</span></label><select data-cfg="template_id">${opts(templates, cfg.template_id, { blank: 'Any template' })}</select></div>`;
-      switch (a.trigger_type) {
-        case 'email_sent':
-        case 'email_opened':
-          return `<div class="row">${campaignSel}${templateSel}</div>`;
-        case 'link_clicked':
-          return `<div class="row">${campaignSel}<div class="field"><label>URL contains <span class="hint">(optional)</span></label><input type="text" data-cfg="url_contains" value="${esc(cfg.url_contains || '')}"></div></div>`;
-        case 'reply_received':
-          return `<div class="row">${campaignSel}<div class="field"><label>Reply contains any keyword <span class="hint">(comma separated, optional)</span></label><input type="text" data-cfg="keywords" value="${esc(cfg.keywords || '')}" placeholder="interested, price, call"></div></div>`;
-        case 'contact_added':
-          return `<div class="field"><label>List</label><select data-cfg="list_id">${opts(lists, cfg.list_id, { blank: 'Any list' })}</select></div>`;
-        default:
-          return '<p class="hint">Enrol contacts manually from this page after saving.</p>';
-      }
-    };
-
-    const stepFields = (s, i) => {
-      const tplSel = `<select data-step="${i}" data-k="template_id">${opts(templates, s.template_id, { blank: '— choose template —' })}</select>`;
-      switch (s.type) {
-        case 'wait':
-          return `<div class="row"><div class="field"><label>Wait</label><input type="number" min="0" data-step="${i}" data-k="amount" value="${esc(s.amount ?? 1)}"></div>
-            <div class="field"><label>&nbsp;</label><select data-step="${i}" data-k="unit">${['minutes', 'hours', 'days'].map((u) => `<option ${(s.unit || 'days') === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div></div>`;
-        case 'send_email':
-          return `<div class="field"><label>Template</label>${tplSel}</div>
-            <div class="field"><label>Subject <span class="hint">(blank = template subject)</span></label><input type="text" data-step="${i}" data-k="subject" value="${esc(s.subject || '')}"></div>
-            <label class="check"><input type="checkbox" data-step="${i}" data-k="reply_in_thread" ${s.reply_in_thread ? 'checked' : ''}> Send as a reply in the same thread ("Re: …")</label>`;
-        case 'stop_if':
-          return `<div class="field"><label>Stop the automation if the contact…</label><select data-step="${i}" data-k="condition">${[['replied', 'has replied'], ['opened', 'has opened an email'], ['clicked', 'has clicked a link'], ['not_opened', 'has NOT opened any email'], ['not_clicked', 'has NOT clicked'], ['unsubscribed', 'has unsubscribed']].map(([v, l]) => `<option value="${v}" ${s.condition === v ? 'selected' : ''}>${l}</option>`).join('')}</select><p class="hint">Checked since the contact entered this automation.</p></div>`;
-        case 'add_tag':
-        case 'remove_tag':
-          return `<div class="field"><label>Tag</label><input type="text" data-step="${i}" data-k="tag" value="${esc(s.tag || '')}"></div>`;
-        case 'add_to_list':
-        case 'remove_from_list':
-          return `<div class="field"><label>List</label><select data-step="${i}" data-k="list_id">${opts(lists, s.list_id, { blank: '— choose list —' })}</select></div>`;
-        case 'update_field':
-          return `<div class="row"><div class="field"><label>Field</label><select data-step="${i}" data-k="field">${['status', 'company', 'country', 'industry', 'phone', 'website', 'first_name', 'last_name'].map((x) => `<option ${s.field === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
-            <div class="field"><label>Value</label><input type="text" data-step="${i}" data-k="value" value="${esc(s.value || '')}"></div></div>`;
-        case 'notify':
-          return `<div class="row"><div class="field"><label>Notify email <span class="hint">(blank = sender address)</span></label><input type="email" data-step="${i}" data-k="email" value="${esc(s.email || '')}"></div>
-            <div class="field"><label>Subject <span class="hint">(optional)</span></label><input type="text" data-step="${i}" data-k="subject" value="${esc(s.subject || '')}"></div></div>`;
-        case 'webhook':
-          return `<div class="field"><label>Webhook URL</label><input type="url" data-step="${i}" data-k="url" value="${esc(s.url || '')}" placeholder="https://hooks.zapier.com/…"></div>`;
-        default:
-          return '';
-      }
-    };
-
-    const draw = () => {
-      root.innerHTML = `
-        <div class="page-head"><div><a href="#/automations">← Automations</a><h1>${a.id ? esc(a.name) : 'New automation'} ${statusBadge(a.status)}</h1></div>
-          <div class="actions">${a.id ? '<button class="btn" id="enroll">Enrol contacts…</button>' : ''}<button class="btn" id="save">Save</button><button class="btn ${a.status === 'active' ? '' : 'success'}" id="toggle">${a.status === 'active' ? 'Save &amp; pause' : 'Save &amp; activate'}</button></div></div>
-        <div class="card"><div class="field" style="max-width:480px"><label>Name</label><input type="text" id="a-name" value="${esc(a.name)}" placeholder="e.g. Follow up non-responders"></div>
-          <label class="check"><input type="checkbox" id="a-stop" ${a.trigger_config.stop_on_reply ? 'checked' : ''}> Stop this automation for a contact as soon as they reply</label>
-          <label class="check"><input type="checkbox" id="a-reentry" ${a.allow_reentry ? 'checked' : ''}> Allow a contact to go through this automation more than once</label></div>
-        <div class="flow">
-          <div class="node trigger"><div class="node-head"><span>⚡</span><span class="t">Trigger</span></div>
-            <div class="field"><select id="a-trigger">${Object.entries(meta.triggers).map(([k, v]) => `<option value="${k}" ${a.trigger_type === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>
-            <div id="trigger-cfg">${triggerFields()}</div></div>
-          ${a.steps.map((s, i) => `<div class="arrow">↓</div>
-            <div class="node step"><div class="node-head"><span class="badge blue">${i + 1}</span><span class="t">${esc(meta.stepTypes[s.type] || s.type)}</span>
-              <button class="btn icon sm" data-mv="${i}" data-d="-1" ${i === 0 ? 'disabled' : ''}>↑</button><button class="btn icon sm" data-mv="${i}" data-d="1" ${i === a.steps.length - 1 ? 'disabled' : ''}>↓</button><button class="btn icon sm danger" data-rm="${i}">✕</button></div>
-              ${stepFields(s, i)}</div>`).join('')}
-          <div class="arrow">↓</div>
-          <div class="node" style="border-style:dashed"><div class="row"><div class="field" style="margin:0"><select id="new-step">${Object.entries(meta.stepTypes).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select></div><button class="btn primary" id="add-step">＋ Add step</button></div></div>
-        </div>
-        ${a.id ? `<div class="card" style="margin-top:20px"><h2>Recent runs</h2>${a.recent.length ? `<table class="data"><thead><tr><th>Contact</th><th>Status</th><th>Step</th><th>Next action</th><th>Log</th><th></th></tr></thead><tbody>
-          ${a.recent.map((r) => `<tr><td>${esc(r.email)}</td><td>${statusBadge(r.status)}</td><td>${r.step_index + 1}</td><td class="nowrap">${r.status === 'active' ? fmtDate(r.next_run_at) : ''}</td>
-            <td class="run-log">${r.log.slice(-4).map((l) => `${esc(l.type)}: ${esc(l.note || l.error || '')}`).join('<br>')}</td><td>${r.status === 'active' ? `<button class="btn sm" data-stop="${r.id}">Stop</button>` : ''}</td></tr>`).join('')}
-          </tbody></table>` : '<p class="muted">No runs yet.</p>'}</div>` : ''}`;
-
-      const sync = () => {
-        a.name = root.querySelector('#a-name').value;
-        a.trigger_config.stop_on_reply = root.querySelector('#a-stop').checked;
-        a.allow_reentry = root.querySelector('#a-reentry').checked ? 1 : 0;
-        root.querySelectorAll('[data-cfg]').forEach((el) => { a.trigger_config[el.dataset.cfg] = el.value; });
-        root.querySelectorAll('[data-step]').forEach((el) => {
-          a.steps[el.dataset.step][el.dataset.k] = el.type === 'checkbox' ? el.checked : el.value;
-        });
-      };
-      root.querySelector('#a-trigger').onchange = (e) => {
-        sync();
-        a.trigger_type = e.target.value;
-        a.trigger_config = { stop_on_reply: a.trigger_config.stop_on_reply };
-        draw();
-      };
-      root.querySelector('#add-step').onclick = () => {
-        sync();
-        const type = root.querySelector('#new-step').value;
-        a.steps.push({ type, ...(type === 'wait' ? { amount: 1, unit: 'days' } : {}), ...(type === 'stop_if' ? { condition: 'replied' } : {}) });
-        draw();
-      };
-      root.querySelectorAll('[data-rm]').forEach((b) => (b.onclick = () => { sync(); a.steps.splice(Number(b.dataset.rm), 1); draw(); }));
-      root.querySelectorAll('[data-mv]').forEach((b) => (b.onclick = () => {
-        sync();
-        const i = Number(b.dataset.mv);
-        const j = i + Number(b.dataset.d);
-        [a.steps[i], a.steps[j]] = [a.steps[j], a.steps[i]];
-        draw();
-      }));
-      root.querySelectorAll('[data-stop]').forEach((b) => (b.onclick = async () => { await api.post(`/automation-runs/${b.dataset.stop}/stop`); App.navigate(); }));
-      const save = async (status) => {
-        sync();
-        const body = { name: a.name || 'Untitled automation', trigger_type: a.trigger_type, trigger_config: a.trigger_config, steps: a.steps, status: status || a.status, allow_reentry: a.allow_reentry };
-        const saved = a.id ? await api.put(`/automations/${a.id}`, body) : await api.post('/automations', body);
-        toast(`Automation saved${saved.status === 'active' ? ' and active' : ''}`);
-        location.hash = `#/automations/${saved.id}`;
-        if (a.id) App.navigate();
-      };
-      root.querySelector('#save').onclick = () => save();
-      root.querySelector('#toggle').onclick = () => save(a.status === 'active' ? 'paused' : 'active');
-      root.querySelector('#enroll')?.addEventListener('click', () => modal(`<h2>Enrol contacts</h2><p class="hint">Start this automation now for every subscribed contact in a list.</p>
-        <div class="field"><label>List</label><select id="el">${opts(lists, '', {})}</select></div>
-        <div class="foot"><button class="btn" data-close>Cancel</button><button class="btn primary" id="go">Enrol</button></div>`, {
-        onMount: (el, close) => (el.querySelector('#go').onclick = async () => {
-          await api.post(`/automations/${a.id}/enroll`, { list_id: el.querySelector('#el').value });
-          toast(`Enrolment queued${a.status === 'active' ? '' : ' (activate the automation to start processing)'}`);
-          close();
-          App.navigate();
-        }),
-      }));
-    };
-    draw();
-  });
-
   // ================================================================ Contacts
   route(/^#\/contacts(?:\?(.*))?$/, async (root, qs) => {
     const params = new URLSearchParams(qs || '');
     const [lists, facets] = await Promise.all([api.get('/lists'), api.get('/contacts/facets')]);
     let page = 1;
     root.innerHTML = `
-      <div class="page-head"><h1>Contacts</h1><div class="actions">
-        <button class="btn" id="export">⬇ Export CSV</button><button class="btn" id="import">⬆ Import CSV</button><a class="btn" href="#/leads">🔎 Find leads</a><button class="btn primary" id="add">＋ Add contact</button></div></div>
+      <div class="page-head"><div><h1>Contacts</h1><div class="subtitle">Everyone you email or message. Import, filter, tag and organise.</div></div><div class="actions">
+        <button class="btn" id="export">${App.icon('download', 17)}Export CSV</button><button class="btn" id="import">${App.icon('upload', 17)}Import CSV</button><a class="btn" href="#/leads">${App.icon('search', 17)}Find leads</a><button class="btn primary" id="add">${App.icon('plus', 17)}Add contact</button></div></div>
       <div class="card"><div class="row" id="filters">
         <div class="field"><label>Search</label><input type="search" name="q" placeholder="Email, name, company" value="${esc(params.get('q') || '')}"></div>
         <div class="field"><label>List</label><select name="list_id">${opts(lists, params.get('list_id'), { blank: 'All lists' })}</select></div>
@@ -412,7 +253,7 @@
         <select id="bulk-list" style="width:auto;display:none">${opts(lists, '')}</select><input type="text" id="bulk-tag" placeholder="tag" style="width:140px;display:none">
         <button class="btn" id="bulk-go">Apply to selected</button></div>
         <div id="table"></div>
-        <div class="row" style="justify-content:center;margin-top:12px"><button class="btn sm" id="prev">← Prev</button><span id="pageinfo" class="muted"></span><button class="btn sm" id="next">Next →</button></div></div>`;
+        <div class="row" style="justify-content:center;margin-top:12px"><button class="btn sm" id="prev">${App.icon('chevron-left', 16)}Prev</button><span id="pageinfo" class="muted"></span><button class="btn sm" id="next">Next${App.icon('chevron-right', 16)}</button></div></div>`;
     const filters = root.querySelector('#filters');
     const query = () => {
       const f = formData(filters);
@@ -426,9 +267,9 @@
       root.querySelector('#count').textContent = `${r.total} contacts`;
       root.querySelector('#pageinfo').textContent = `Page ${page} of ${Math.max(1, Math.ceil(r.total / 50))}`;
       const listName = Object.fromEntries(lists.map((l) => [l.id, l.name]));
-      root.querySelector('#table').innerHTML = r.rows.length ? `<table class="data"><thead><tr><th><input type="checkbox" id="all"></th><th>Email</th><th>Name</th><th>Company</th><th>Country</th><th>Industry</th><th>Lists / tags</th><th>Status</th></tr></thead><tbody>
-        ${r.rows.map((c) => `<tr><td><input type="checkbox" class="sel" value="${esc(c.id)}"></td><td><a href="#/contacts/${encodeURIComponent(c.id)}">${esc(c.email)}</a>${c.replied_at ? ' <span class="badge yellow">replied</span>' : ''}</td>
-          <td>${esc([c.first_name, c.last_name].join(' '))}</td><td>${esc(c.company)}</td><td>${esc(c.country)}</td><td>${esc(c.industry)}</td>
+      root.querySelector('#table').innerHTML = r.rows.length ? `<table class="data"><thead><tr><th><input type="checkbox" id="all"></th><th>Contact</th><th>Name</th><th>Company</th><th class="hide-sm">Phone</th><th class="hide-sm">Country</th><th class="hide-sm">Industry</th><th>Lists / tags</th><th>Status</th></tr></thead><tbody>
+        ${r.rows.map((c) => `<tr><td><input type="checkbox" class="sel" value="${esc(c.id)}"></td><td><a href="#/contacts/${encodeURIComponent(c.id)}">${esc(c.email || (c.phone ? c.phone : c.id))}</a>${c.replied_at ? ' <span class="badge yellow">replied</span>' : ''}</td>
+          <td>${esc([c.first_name, c.last_name].join(' '))}</td><td>${esc(c.company)}</td><td class="hide-sm nowrap">${esc(c.phone || '')}</td><td class="hide-sm">${esc(c.country)}</td><td class="hide-sm">${esc(c.industry)}</td>
           <td>${(c.list_ids || []).map((id) => `<span class="badge">${esc(listName[id] || id)}</span>`).join(' ')} ${(c.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</td><td>${statusBadge(c.status)}</td></tr>`).join('')}
         </tbody></table>` : '<div class="empty">No contacts match. Import a CSV or use the Lead Finder.</div>';
       root.querySelector('#all')?.addEventListener('change', (e) => root.querySelectorAll('.sel').forEach((x) => { x.checked = e.target.checked; }));
@@ -519,7 +360,7 @@
     const id = encodeURIComponent(decodeURIComponent(rawId));
     const [c, lists] = await Promise.all([api.get(`/contacts/${id}`), api.get('/lists')]);
     root.innerHTML = `
-      <div class="page-head"><div><a href="#/contacts">← Contacts</a><h1>${esc(c.email)} ${statusBadge(c.status)}</h1></div>
+      <div class="page-head"><div><a class="back" href="#/contacts">${App.icon('chevron-left', 16)}Contacts</a><h1>${esc(c.email || c.phone || c.id)} ${statusBadge(c.status)}</h1></div>
         <div class="actions"><button class="btn" id="edit">Edit</button><button class="btn danger" id="del">Delete</button></div></div>
       <div class="grid cols-3">
         <div class="card"><h2>Profile</h2>${[['Name', `${c.first_name} ${c.last_name}`], ['Company', c.company], ['Website', c.website], ['Phone', c.phone], ['Country', c.country], ['Industry', c.industry], ['Source', c.source], ['Added', fmtDate(c.created_at)], ['Last reply', fmtDate(c.replied_at)]]
@@ -527,7 +368,8 @@
           <div>${c.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div></div>
         <div class="card" style="grid-column:span 2"><h2>Emails</h2>${c.messages.length ? `<table class="data"><thead><tr><th>Subject</th><th>Campaign</th><th>Status</th><th>Sent</th><th>Opened</th><th>Clicked</th><th>Replied</th></tr></thead><tbody>
           ${c.messages.map((m) => `<tr><td>${esc(m.subject)}</td><td>${esc(m.campaign || 'automation')}</td><td>${statusBadge(m.status)}</td><td class="nowrap">${fmtDate(m.sent_at)}</td><td>${m.opened_at ? '✓' : ''}</td><td>${m.clicked_at ? '✓' : ''}</td><td>${m.replied_at ? '✓' : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No emails sent yet.</p>'}
-          <h2 style="margin-top:16px">Replies</h2>${c.replies.length ? c.replies.map((r) => `<div><strong>${esc(r.subject)}</strong> <span class="muted">${fmtDate(r.received_at)}</span><div class="reply-body">${esc(r.body)}</div></div>`).join('') : '<p class="muted">No replies.</p>'}
+          <h2 style="margin-top:16px">Replies</h2>${c.replies.length ? c.replies.map((r) => `<div style="margin-bottom:10px">${r.channel === 'whatsapp' ? '<span class="badge green">WhatsApp</span> ' : ''}<strong>${esc(r.subject)}</strong> <span class="muted">${fmtDate(r.received_at)}</span><div class="reply-body">${esc(r.body)}</div></div>`).join('') : '<p class="muted">No replies.</p>'}
+          ${(c.whatsapp || []).length ? `<h2 style="margin-top:16px">WhatsApp</h2>${c.whatsapp.map((w) => `<div class="list-row"><span class="badge ${w.direction === 'in' ? 'green' : 'blue'}">${w.direction === 'in' ? 'Received' : 'Sent'}</span><div class="grow">${esc(w.text)}</div><span class="muted nowrap" style="font-size:13px">${fmtDate(w.created_at)}</span></div>`).join('')}` : ''}
         </div></div>`;
     root.querySelector('#edit').onclick = () => contactModal(c, lists, (saved) => { location.hash = `#/contacts/${encodeURIComponent(saved?.id || c.id)}`; App.navigate(); });
     root.querySelector('#del').onclick = async () => {
@@ -539,7 +381,7 @@
   route(/^#\/lists$/, async (root) => {
     const lists = await api.get('/lists');
     root.innerHTML = `
-      <div class="page-head"><h1>Lists</h1><div class="actions"><button class="btn primary" id="new">＋ New list</button></div></div>
+      <div class="page-head"><div><h1>Lists</h1><div class="subtitle">Group contacts for campaigns and automations.</div></div><div class="actions"><button class="btn primary" id="new">${App.icon('plus', 17)}New list</button></div></div>
       <div class="card table-wrap">${lists.length ? `<table class="data"><thead><tr><th>Name</th><th>Description</th><th class="right">Contacts</th><th class="right">Subscribed</th><th>Created</th><th></th></tr></thead><tbody>
         ${lists.map((l) => `<tr><td><a href="#/contacts?list_id=${l.id}">${esc(l.name)}</a></td><td class="muted">${esc(l.description)}</td><td class="right">${l.contacts}</td><td class="right">${l.subscribed || 0}</td><td>${fmtDate(l.created_at)}</td>
           <td class="nowrap"><button class="btn sm" data-edit="${l.id}">Rename</button> <button class="btn sm danger" data-del="${l.id}">Delete</button></td></tr>`).join('')}
@@ -568,7 +410,7 @@
     const hasHunter = !!settings.hunter_api_key;
     const hasApollo = !!settings.apollo_api_key;
     root.innerHTML = `
-      <div class="page-head"><h1>Lead Finder</h1></div>
+      <div class="page-head"><div><h1>Lead Finder</h1><div class="subtitle">Find business contacts by country and industry.</div></div></div>
       ${workerBanner(meta)}
       <div class="banner info">Find publicly listed business emails by <strong>country</strong> and <strong>industry</strong>: search the web and crawl company websites (robots.txt respected), or query B2B data portals (Hunter.io, Apollo.io) with your API keys.
         Only email people you have a lawful basis to contact, include an unsubscribe link (added automatically), and follow local rules (GDPR, PDPA, CAN-SPAM, CASL).</div>
@@ -586,7 +428,7 @@
           <label class="check"><input type="checkbox" name="sources" data-group value="apollo" ${hasApollo ? 'checked' : 'disabled'}> Apollo.io ${hasApollo ? '' : '<span class="hint">(add API key in Settings)</span>'}</label>
           <label class="check"><input type="checkbox" name="sources" data-group value="urls" id="src-urls"> Crawl specific websites / directory pages</label></div>
         <div class="field" id="urls-field" style="display:none"><label>Websites to crawl <span class="hint">(one per line)</span></label><textarea name="urls" rows="4" placeholder="https://company-a.com&#10;company-b.com.my"></textarea></div>
-        <button class="btn primary" id="go">🔎 Start search</button>
+        <button class="btn primary" id="go">${App.icon('search', 17)}Start search</button>
       </div>
       <div class="card table-wrap"><h2>Searches</h2>${searches.length ? `<table class="data"><thead><tr><th>#</th><th>Countries</th><th>Industries</th><th>Status</th><th class="right">Emails</th><th>Started</th><th></th></tr></thead><tbody>
         ${searches.map((s) => `<tr><td><a href="#/leads/${s.id}">#${s.id}</a></td><td>${esc((s.params.countries || []).join(', ') || '—')}</td><td>${esc((s.params.industries || []).join(', ') || s.params.keywords || '—')}</td>
@@ -628,7 +470,7 @@
       const keepChecked = new Set([...root.querySelectorAll('.sel:checked')].map((x) => x.value));
       const keep = Object.fromEntries(['list', 'newlist', 'tags'].map((k) => [k, root.querySelector(`#${k}`)?.value || '']));
       root.innerHTML = `
-        <div class="page-head"><div><a href="#/leads">← Lead Finder</a><h1>Search #${s.id} ${statusBadge(s.status)}</h1>
+        <div class="page-head"><div><a class="back" href="#/leads">${App.icon('chevron-left', 16)}Lead Finder</a><h1>Search #${s.id} ${statusBadge(s.status)}</h1>
           <div class="muted">${esc([(s.params.countries || []).join(', '), (s.params.industries || []).join(', '), s.params.keywords].filter(Boolean).join(' · '))}</div></div>
           <div class="actions"><button class="btn danger" id="del">Delete search</button></div></div>
         <div class="card"><strong>${s.leads.length} emails found.</strong> <span class="muted">${esc(s.progress || '')}</span>
@@ -671,11 +513,12 @@
   route(/^#\/replies$/, async (root) => {
     const [meta, list] = await Promise.all([App.getMeta(true), api.get('/replies')]);
     root.innerHTML = `
-      <div class="page-head"><h1>Replies</h1><div class="actions"><button class="btn" id="log">＋ Log a reply manually</button><button class="btn primary" id="poll" ${meta.workerConfigured ? '' : 'disabled'}>↻ Check Gmail now</button></div></div>
+      <div class="page-head"><div><h1>Replies</h1><div class="subtitle">Email and WhatsApp replies, matched to the message they answer.</div></div><div class="actions"><button class="btn" id="log">${App.icon('plus', 17)}Log a reply manually</button><button class="btn primary" id="poll" ${meta.workerConfigured ? '' : 'disabled'}>${App.icon('refresh', 17)}Check Gmail now</button></div></div>
       ${workerBanner(meta)}<p class="muted">Replies are read from your Gmail inbox every 5 minutes and matched to the email they answer.</p>
       <div class="card">${list.length ? list.map((r) => `<div style="padding:12px 0;border-bottom:1px solid var(--border)">
-        <div class="row" style="align-items:center"><strong>${r.contact_id ? `<a href="#/contacts/${r.contact_id}">${esc([r.first_name, r.last_name].join(' ').trim() || r.from_email)}</a>` : esc(r.from_email)}</strong>
-        <span class="muted">${esc(r.from_email)} · ${esc(r.company || '')}</span><span class="spacer"></span><span class="muted">${fmtDate(r.received_at)}</span></div>
+        <div class="row" style="align-items:center">${r.channel === 'whatsapp' ? `<span class="badge green">${App.icon('whatsapp', 13)}WhatsApp</span>` : `<span class="badge blue">${App.icon('mail', 13)}Email</span>`}
+        <strong>${r.contact_id ? `<a href="#/contacts/${encodeURIComponent(r.contact_id)}">${esc([r.first_name, r.last_name].join(' ').trim() || r.from_email || r.phone)}</a>` : esc(r.from_email || r.phone)}</strong>
+        <span class="muted">${esc(r.from_email || (r.phone ? '+' + r.phone : ''))}${r.company ? ` · ${esc(r.company)}` : ''}</span><span class="spacer"></span><span class="muted">${fmtDate(r.received_at)}</span></div>
         <div><strong>${esc(r.subject)}</strong> ${r.campaign ? `<span class="badge">${esc(r.campaign)}</span>` : ''}</div>
         <div class="reply-body">${esc(r.body || '')}</div></div>`).join('') : '<div class="empty">No replies yet.</div>'}</div>`;
     root.querySelector('#poll').onclick = async () => {
@@ -695,52 +538,6 @@
     });
   });
 
-  // ================================================================ Settings
-  route(/^#\/settings$/, async (root) => {
-    const [s, meta] = await Promise.all([api.get('/settings'), App.getMeta(true)]);
-    const st = s.status || {};
-    const input = (k, label, type = 'text', hint = '') => `<div class="field"><label>${label} ${hint ? `<span class="hint">${hint}</span>` : ''}</label><input type="${type}" name="${k}" value="${esc(s[k] ?? '')}" autocomplete="off"></div>`;
-    root.innerHTML = `
-      <div class="page-head"><h1>Settings</h1><div class="actions"><button class="btn primary" id="save">Save settings</button></div></div>
-      <div class="grid cols-2" id="settings">
-        <div class="card"><h2>Sender</h2>
-          <div class="field"><label>Sending account</label><input type="text" value="${esc(meta.account || 'not connected yet')}" disabled>
-            <p class="hint">Emails are sent from the Google account that owns the Apps Script worker (via Gmail). To send from an alias, add it in Gmail settings → Accounts → "Send mail as".</p></div>
-          ${input('from_name', 'From name')}${input('reply_to', 'Reply-to', 'email', '(optional)')}
-          ${input('company_address', 'Company postal address', 'text', '(required by CAN-SPAM; shown in footers)')}</div>
-        <div class="card"><h2>Sending limits</h2>
-          ${input('daily_limit', 'Max emails per day', 'number', '(free Gmail ≈ 100, Google Workspace ≈ 1,500)')}
-          ${input('per_run_limit', 'Max emails per 5-minute run', 'number', '(spreads sending out, protects your reputation)')}
-          <div class="field"><label>Dry-run mode</label><select name="dry_run"><option value="false" ${!s.dry_run ? 'selected' : ''}>Off - deliver emails</option><option value="true" ${s.dry_run ? 'selected' : ''}>On - record but do not deliver</option></select></div>
-          <p class="hint">Today: ${meta.remainingToday ?? '?'} emails left.</p></div>
-        <div class="card"><h2>Worker (Google Apps Script)</h2>
-          <p class="hint">Sends email through Gmail, reads replies from your inbox, runs automations, crawls leads and records opens. <code>setup()</code> fills these in automatically.</p>
-          ${input('tracking_url', 'Apps Script web app URL', 'url', '(…/exec)')}
-          ${input('site_url', 'Firebase Hosting URL', 'url', '(used for click and unsubscribe links)')}
-          <p class="hint">Last run: ${st.last_tick ? fmtDate(st.last_tick) : 'never'} · Last Gmail check: ${st.last_reply_poll ? fmtDate(st.last_reply_poll) : 'never'}</p>
-          ${st.last_summary ? `<p class="hint mono">${esc(st.last_summary)}</p>` : ''}
-          <button class="btn" id="check">Check worker connection</button> <button class="btn" id="run">Run worker now</button></div>
-        <div class="card"><h2>Lead finder sources</h2>
-          <p class="hint">Without keys, the Lead Finder uses DuckDuckGo search and crawls public company websites. Google Programmable Search gives 100 free queries/day.</p>
-          ${input('hunter_api_key', 'Hunter.io API key', 'password', '(hunter.io → API)')}
-          ${input('apollo_api_key', 'Apollo.io API key', 'password', '(apollo.io → Settings → API)')}
-          ${input('google_cse_key', 'Google Programmable Search API key', 'password')}
-          ${input('google_cse_cx', 'Google Search engine ID (cx)')}
-          ${input('crawler_user_agent', 'Crawler User-Agent', 'text', '(identify yourself to websites)')}</div>
-      </div>`;
-    const save = async () => {
-      await api.put('/settings', formData(root.querySelector('#settings')));
-      await App.getMeta(true);
-      toast('Settings saved');
-    };
-    root.querySelector('#save').onclick = save;
-    root.querySelector('#check').onclick = async () => { await save(); const r = await api.post('/settings/check'); toast(r.message, r.ok ? 'info' : 'error'); };
-    root.querySelector('#run').onclick = async () => {
-      toast('Running the worker…');
-      const r = await api.post('/replies/poll');
-      toast(`Worker finished: ${JSON.stringify(r.summary || {})}`);
-      App.navigate();
-    };
-  });
-
+  // Shared with automations.js / settings.js
+  App.banners = { worker: workerBanner, dryRun: dryRunBanner };
 })();

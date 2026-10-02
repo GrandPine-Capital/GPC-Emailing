@@ -24,6 +24,8 @@ var Automations = (function () {
     if (has(config.campaign_id) && String(config.campaign_id) !== String(event.campaignId)) return false;
     if (has(config.template_id) && String(config.template_id) !== String(event.templateId)) return false;
     if (has(config.list_id) && String(config.list_id) !== String(event.listId)) return false;
+    if (has(config.tag) && String(config.tag) !== String(event.tag)) return false;
+    if (has(config.event) && String(config.event) !== String(event.event)) return false;
     if (has(config.url_contains) && String(event.url || '').toLowerCase().indexOf(String(config.url_contains).toLowerCase()) < 0) return false;
     if (has(config.keywords)) {
       const text = String(event.text || '').toLowerCase();
@@ -73,7 +75,7 @@ var Automations = (function () {
     const created = [];
     const autos = active();
 
-    if (type === 'reply_received') {
+    if (type === 'reply_received' || type === 'whatsapp_received') {
       // Sequences flagged "stop on reply" end as soon as the contact replies.
       autos.forEach(function (a) {
         if (!(a.trigger_config || {}).stop_on_reply) return;
@@ -95,7 +97,7 @@ var Automations = (function () {
     return created;
   }
 
-  function conditionMet(condition, run) {
+  function conditionMet(condition, run, tag) {
     const since = run.created_at;
     const contact = FS.get('contacts/' + run.contact_id) || {};
     const msgs = function () { return FS.query('messages', { where: [['contact_id', '==', run.contact_id]] }); };
@@ -107,6 +109,8 @@ var Automations = (function () {
       case 'clicked': return msgs().some(function (m) { return m.clicked_at && m.clicked_at >= since; });
       case 'not_clicked': return !conditionMet('clicked', run);
       case 'unsubscribed': return contact.status !== 'subscribed';
+      case 'has_tag': return (contact.tags || []).indexOf(tag) >= 0;
+      case 'not_has_tag': return (contact.tags || []).indexOf(tag) < 0;
       default: return false;
     }
   }
@@ -128,6 +132,7 @@ var Automations = (function () {
       }
       case 'send_email': {
         if (contact.status !== 'subscribed') return { stop: true, note: 'contact ' + contact.status };
+        if (!EmailCore.isEmail(contact.email)) return { note: 'skipped: contact has no email address' };
         if (Mailer.remainingToday() <= 0) return { waitUntil: new Date(Date.now() + 3600e3), retry: true, note: 'daily sending limit reached, retrying later' };
         const template = Delivery.getTemplate(step.template_id);
         if (!template) throw new Error('template ' + step.template_id + ' not found');
@@ -142,17 +147,34 @@ var Automations = (function () {
             if (!step.subject) subject = /^re:/i.test(orig.subject || '') ? orig.subject : 'Re: ' + (orig.subject || subject);
           }
         }
-        const m = Delivery.createMessage({ contact: contact, templateId: template.id, subject: subject, automationId: run.automation_id, runId: run.id });
+        const m = Delivery.createMessage({ contact: contact, templateId: template.id, subject: subject, automationId: run.automation_id, runId: run.id, fromEmail: step.from_email });
         FS.commit([m.op]);
         const status = Delivery.deliver(m.doc, extra);
         if (status === 'failed') throw new Error((FS.get('messages/' + m.doc.id) || {}).error || 'send failed');
         return { note: 'email "' + subject + '" ' + status };
       }
+      case 'send_whatsapp': {
+        if (contact.status === 'unsubscribed' && !step.ignore_unsubscribe) return { stop: true, note: 'contact unsubscribed' };
+        const vars = whatsappVars(contact);
+        const text = EmailCore.merge(step.text || '', vars);
+        const params = String(step.params || '').split('|').map(function (p) { return EmailCore.merge(p.trim(), vars); }).filter(Boolean);
+        Integrations.sendWhatsApp(contact, { provider: step.provider, text: text, template: step.template_name, language: step.language, params: params });
+        logWhatsApp(contact, text || ('template ' + step.template_name), run);
+        return { note: 'WhatsApp sent via ' + (step.provider || CONFIG.settings().whatsapp_provider || 'chatdaddy') };
+      }
+      case 'chatdaddy_contact': {
+        const tags = String(step.tags || '').split(',').map(function (t) { return EmailCore.merge(t.trim(), whatsappVars(contact)); }).filter(Boolean);
+        if (step.include_contact_tags) tags.push.apply(tags, contact.tags || []);
+        Integrations.chatdaddyUpsert(contact, tags);
+        return { note: 'synced to ChatDaddy' + (tags.length ? ' with tags ' + tags.join(', ') : '') };
+      }
       case 'stop_if':
-        return conditionMet(step.condition, run) ? { stop: true, note: 'stopped: ' + step.condition } : { note: 'condition ' + step.condition + ' not met' };
-      case 'add_tag':
+        return conditionMet(step.condition, run, step.tag) ? { stop: true, note: 'stopped: ' + step.condition } : { note: 'condition ' + step.condition + ' not met' };
+      case 'add_tag': {
         FS.commit([{ transform: contactPath, arrayUnion: { tags: [step.tag] } }, { transform: 'meta/facets', arrayUnion: { tags: [step.tag] } }]);
+        if ((contact.tags || []).indexOf(step.tag) < 0) fire('tag_added', { contactId: contact.id, tag: step.tag, fromAutomation: run.automation_id });
         return { note: 'tag +' + step.tag };
+      }
       case 'remove_tag':
         FS.commit([{ transform: contactPath, arrayRemove: { tags: [step.tag] } }]);
         return { note: 'tag -' + step.tag };
@@ -175,17 +197,24 @@ var Automations = (function () {
       }
       case 'notify': {
         const text = (ctx.event || {}).text;
-        const reply = text ? '\n\nReply:\n' + String(text).slice(0, 2000) : '';
-        const to = step.email || CONFIG.senderEmail();
-        Mailer.send({
-          to: to,
-          force: true,
-          subject: step.subject || '[Automation] ' + ctx.automation_name + ': ' + contact.email,
-          text: 'Automation "' + ctx.automation_name + '" triggered by ' + ctx.trigger + ' for ' + contact.email +
-            ' (' + [contact.first_name, contact.last_name].filter(Boolean).join(' ') + ', ' + (contact.company || '') + ').' + reply +
-            '\n\nOpen the dashboard: ' + CONFIG.siteUrl() + '/#/contacts/' + encodeURIComponent(contact.id),
-        });
-        return { note: 'notified ' + to };
+        const reply = text ? '\n\nMessage:\n' + String(text).slice(0, 2000) : '';
+        const who = contact.email || contact.phone || contact.id;
+        const summary = 'Automation "' + ctx.automation_name + '" (' + ctx.trigger + ') for ' + who +
+          ' (' + [contact.first_name, contact.last_name].filter(Boolean).join(' ') + (contact.company ? ', ' + contact.company : '') + ').' + reply +
+          '\n\nOpen: ' + CONFIG.siteUrl() + '/#/contacts/' + encodeURIComponent(contact.id);
+        const channel = step.channel || 'email';
+        const notes = [];
+        if (channel === 'email' || channel === 'both') {
+          const to = step.email || CONFIG.senderEmail();
+          Mailer.send({ to: to, force: true, subject: step.subject || '[Automation] ' + ctx.automation_name + ': ' + who, text: summary });
+          notes.push('emailed ' + to);
+        }
+        if (channel === 'whatsapp' || channel === 'both') {
+          if (!step.whatsapp) throw new Error('enter the WhatsApp number to notify');
+          Integrations.sendWhatsApp(step.whatsapp, { provider: step.provider, text: (step.subject ? step.subject + '\n' : '') + summary });
+          notes.push('WhatsApp ' + step.whatsapp);
+        }
+        return { note: 'notified: ' + notes.join(', ') };
       }
       case 'webhook': {
         const res = UrlFetchApp.fetch(step.url, {
@@ -201,6 +230,19 @@ var Automations = (function () {
         throw new Error('unknown step type ' + step.type);
     }
   }
+  function whatsappVars(contact) {
+    const s = CONFIG.settings();
+    return Object.assign(EmailCore.contactVars(contact), { sender_name: s.from_name, company_address: s.company_address });
+  }
+
+  /** Keep a record of outgoing WhatsApp messages on the contact's timeline. */
+  function logWhatsApp(contact, text, run) {
+    FS.create('whatsapp', {
+      contact_id: contact.id, phone: Integrations.phoneOf(contact), direction: 'out', text: String(text).slice(0, 4000),
+      automation_id: run.automation_id, created_at: nowIso(),
+    });
+  }
+
   function processRun(run, automation) {
     const steps = automation.steps || [];
     const ctx = run.context || {};

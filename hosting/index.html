@@ -2,50 +2,101 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
   <title>Emailing Portal</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✉️</text></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%232563eb'/><path d='M20 32h60v38H20z' fill='none' stroke='white' stroke-width='7' stroke-linejoin='round'/><path d='m22 35 28 19 28-19' fill='none' stroke='white' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
+  <!-- Sign-in -->
   <div id="signin" class="signin">
     <div class="signin-card">
-      <div class="brand-lg">✉️ Emailing Portal</div>
-      <p class="muted" id="signin-msg">Sign in with your Google account to continue.</p>
-      <button class="btn primary" id="google-signin" style="display:none">Sign in with Google</button>
-      <form id="emu-signin" style="display:none;margin-top:16px;text-align:left">
-        <p class="hint">Emulator mode: sign in with any email.</p>
-        <div class="field"><input type="email" id="emu-email" placeholder="you@example.com" required></div>
-        <button class="btn" type="submit">Sign in (emulator)</button>
-      </form>
-      <button class="btn" id="signout-denied" style="display:none;margin-top:12px">Sign out</button>
+      <div class="logo-tile" data-icon="mail" data-size="22"></div>
+      <div class="brand-lg">Emailing Portal</div>
+      <p class="muted" id="signin-msg">Sign in to continue.</p>
+      <div id="signin-actions" style="display:none">
+        <button class="btn primary block lg" id="google-signin">Sign in with Google</button>
+        <div class="or">or get a sign-in link by email</div>
+        <form id="link-signin" style="text-align:left">
+          <div class="field" style="margin-bottom:12px"><input type="email" id="link-email" placeholder="you@company.com" autocomplete="email" required></div>
+          <button class="btn block" type="submit">Email me a sign-in link</button>
+        </form>
+        <form id="emu-signin" style="display:none;margin-top:16px;text-align:left">
+          <p class="hint">Emulator mode: sign in with any email.</p>
+          <div class="field"><input type="email" id="emu-email" placeholder="you@example.com" required></div>
+          <button class="btn block" type="submit">Sign in (emulator)</button>
+        </form>
+      </div>
+      <button class="btn block" id="signout-denied" style="display:none;margin-top:12px">Sign out</button>
     </div>
   </div>
+
   <div class="layout" id="layout" style="display:none">
-    <aside class="sidebar">
-      <div class="brand">✉️ Emailing</div>
+    <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+      <div class="brand">
+        <div class="logo-tile" data-icon="mail" data-size="22"></div>
+        <div><div class="brand-name">Emailing</div><div class="brand-sub">WORKSPACE</div></div>
+      </div>
       <nav class="nav" id="nav">
-        <a href="#/dashboard" data-nav="dashboard"><span class="ico">📊</span>Dashboard</a>
-        <a href="#/templates" data-nav="templates"><span class="ico">🎨</span>Templates</a>
-        <a href="#/campaigns" data-nav="campaigns"><span class="ico">🚀</span>Campaigns</a>
-        <a href="#/automations" data-nav="automations"><span class="ico">⚡</span>Automations</a>
-        <a href="#/contacts" data-nav="contacts"><span class="ico">👥</span>Contacts</a>
-        <a href="#/lists" data-nav="lists"><span class="ico">🗂️</span>Lists</a>
-        <a href="#/leads" data-nav="leads"><span class="ico">🔎</span>Lead Finder</a>
-        <a href="#/replies" data-nav="replies"><span class="ico">💬</span>Replies</a>
-        <a href="#/settings" data-nav="settings"><span class="ico">⚙️</span>Settings</a>
+        <a href="#/dashboard" data-nav="dashboard"><span data-icon="dashboard"></span>Dashboard</a>
+        <a href="#/templates" data-nav="templates"><span data-icon="templates"></span>Templates</a>
+        <a href="#/campaigns" data-nav="campaigns"><span data-icon="rocket"></span>Campaigns</a>
+        <a href="#/automations" data-nav="automations"><span data-icon="zap"></span>Automations</a>
+        <a href="#/contacts" data-nav="contacts"><span data-icon="users"></span>Contacts</a>
+        <a href="#/lists" data-nav="lists"><span data-icon="folder"></span>Lists</a>
+        <a href="#/leads" data-nav="leads"><span data-icon="search"></span>Lead Finder</a>
+        <a href="#/replies" data-nav="replies"><span data-icon="message"></span>Replies</a>
+        <a href="#/settings" data-nav="settings"><span data-icon="settings"></span>Settings</a>
       </nav>
-      <div class="userbox"><span id="user-email"></span><button class="btn sm" id="signout">Sign out</button></div>
+      <div class="userbox">
+        <div class="user-row">
+          <div class="avatar" id="user-initials">?</div>
+          <div style="min-width:0">
+            <div class="user-email" id="user-email"></div>
+            <div class="user-status"><span class="dot"></span><span id="user-role">Connected</span></div>
+          </div>
+        </div>
+        <button class="btn block" id="signout"><span data-icon="logout" data-size="17"></span>Sign out</button>
+      </div>
     </aside>
-    <main class="main" id="view"></main>
+    <div class="scrim" id="scrim"></div>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="hamburger" id="hamburger" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false"><span data-icon="menu" data-size="24"></span></button>
+        <div class="logo-tile sm" data-icon="mail" data-size="18"></div>
+        <div style="min-width:0"><div class="tb-title" id="tb-title">Dashboard</div><div class="tb-sub">Emailing · Workspace</div></div>
+      </header>
+      <div class="content" id="view"></div>
+    </main>
+
+    <nav class="tabbar" id="tabbar" aria-label="Quick navigation">
+      <a href="#/dashboard" data-nav="dashboard"><span data-icon="dashboard" data-size="22"></span>Overview</a>
+      <a href="#/campaigns" data-nav="campaigns"><span data-icon="send" data-size="22"></span>Campaigns</a>
+      <a href="#/automations" data-nav="automations"><span data-icon="zap" data-size="22"></span>Automate</a>
+      <a href="#/contacts" data-nav="contacts"><span data-icon="users" data-size="22"></span>Contacts</a>
+      <a href="#/settings" data-nav="settings"><span data-icon="settings" data-size="22"></span>Settings</a>
+    </nav>
   </div>
   <div id="toasts"></div>
+  <script src="/js/icons.js"></script>
+  <script>
+    document.querySelectorAll('[data-icon]').forEach(function (el) {
+      el.innerHTML = Icons.svg(el.dataset.icon, Number(el.dataset.size) || 20);
+    });
+  </script>
   <script src="/shared/render-blocks.js"></script>
   <script src="/shared/email-core.js"></script>
   <script src="/shared/catalog.js"></script>
   <script src="/js/app.js"></script>
   <script src="/js/builder.js"></script>
   <script src="/js/views.js"></script>
+  <script src="/js/automations.js"></script>
+  <script src="/js/settings.js"></script>
   <script type="module" src="/js/main.js"></script>
 </body>
 </html>

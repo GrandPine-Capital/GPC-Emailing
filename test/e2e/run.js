@@ -52,7 +52,12 @@ async function main() {
     'https://acmerealty.test': '<title>Acme Realty | KL</title><a href="/contact">Contact us</a>',
     'https://acmerealty.test/contact': '<a href="mailto:sales@acmerealty.test">Sales</a> <p>info@acmerealty.test</p>',
   };
-  const web = (url) => {
+  const waCalls = [];
+  const web = (url, opts) => {
+    if (url.startsWith('https://api.chatdaddy.tech/')) {
+      waCalls.push({ url, body: opts.payload ? JSON.parse(opts.payload) : null });
+      return { body: '{"ok":true}', headers: { 'Content-Type': 'application/json' } };
+    }
     if (url === 'https://html.duckduckgo.com/html/') return { body: `<a class="result__a" href="https://acmerealty.test/">Acme</a>` };
     const k = url.replace(/\/+$/, '');
     return sites[k] !== undefined ? { body: sites[k] } : null;
@@ -64,6 +69,7 @@ async function main() {
   const { chromium } = req('playwright');
   const browser = await chromium.launch(process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {});
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  pageRef = page;
   const errors = [];
   page.on('pageerror', (e) => errors.push(`${e.message}\n${e.stack || ''}`));
   page.on('dialog', (d) => d.accept());
@@ -101,7 +107,7 @@ async function main() {
   await page.goto(SITE);
   await page.fill('#emu-email', 'stranger@example.com');
   await page.click('#emu-signin button');
-  await page.waitForSelector('text=is not an admin');
+  await page.waitForSelector("text=doesn't have access to this portal");
   await shot('01-denied');
   await page.click('#signout-denied');
 
@@ -192,8 +198,8 @@ async function main() {
   await page.goto(SITE);
   await page.waitForSelector('#view h1');
   await page.goto(`${SITE}/#/automations`);
-  await page.click('tr:has-text("Hot lead") [data-toggle]');
-  await page.waitForSelector('tr:has-text("Hot lead") >> text=active');
+  await page.click('.card:has-text("Hot lead: interested reply") [data-toggle]');
+  await page.waitForSelector('.card:has-text("Hot lead: interested reply") .badge:has-text("active")');
   const aliceMsg = list('messages').find((m) => m.email === 'alice@acme.com' && m.campaign_id === campaign.id);
   G.receive({ threadId: aliceMsg.thread_id, from: 'Alice Lim <alice@acme.com>', subject: 'Re: Hi Alice', body: 'Interested! Send pricing please.\n\nOn Mon, X wrote:\n> hi' });
   await page.goto(`${SITE}/#/replies`);
@@ -215,11 +221,89 @@ async function main() {
   await shot('08-leads');
   assert.equal(getDoc('contacts/sales@acmerealty.test').country, 'Malaysia');
 
-  step('settings show the connected worker');
+  step('settings: worker connection, sender identities, integrations, autosave');
   await page.goto(`${SITE}/#/settings`);
   await page.click('#check');
   await page.waitForSelector(`text=Connected. Sending as ${G.OWNER}`);
-  await shot('09-settings');
+  await page.waitForSelector('#senders >> text=sales@acme.test');
+  await page.selectOption('select[name=default_from_email]', 'sales@acme.test');
+  await page.fill('input[name=default_country_code]', '60');
+  await page.fill('input[name=chatdaddy_token]', 'cd-test-token');
+  await page.waitForSelector('#save-state >> text=Auto-saved', { timeout: 15000 });
+  await page.waitForTimeout(1500);
+  const app = getDoc('settings/app');
+  assert.equal(app.default_from_email, 'sales@acme.test');
+  assert.equal(app.default_country_code, '60');
+  assert.equal(getDoc('settings/secrets').chatdaddy_token, 'cd-test-token');
+  await page.fill('#wa-test', '012-345 6789');
+  await page.click('#wa-test-btn');
+  await page.waitForSelector('text=Test WhatsApp message sent');
+  assert.equal(waCalls.at(-1).url, 'https://api.chatdaddy.tech/im/messages/random/60123456789');
+  await page.screenshot({ path: path.join(SHOTS, '09-settings.png'), fullPage: true });
+
+  step('team: invite a member, who can sign in but not change settings');
+  await page.fill('#invite-email', 'member@example.com');
+  await page.click('#invite');
+  await page.waitForSelector('#team >> text=member@example.com');
+  assert.equal(getDoc('admins/member@example.com').role, 'member');
+
+  step('automation from a recipe: tag -> ChatDaddy sync -> WhatsApp');
+  await page.goto(`${SITE}/#/automations/new`);
+  await page.click('[data-recipe="click_to_chatdaddy"]');
+  await page.waitForSelector('.sentence >> text=Sync to ChatDaddy');
+  await page.click('[data-open="-1"]');
+  await page.click('[data-trigger="tag_added"]');
+  await page.fill('[data-cfg="tag"]', 'vip');
+  await page.click('[data-add="0"]');
+  await page.click('.modal [data-type="wait"]');
+  await page.click('[data-preset="1|hours"]');
+  await page.click('[data-rm="0"]');
+  await page.fill('#a-name', 'VIP to WhatsApp');
+  await page.click('#toggle');
+  await waitFor(() => list('automations').find((x) => x.name === 'VIP to WhatsApp' && x.status === 'active'), 'automation saved');
+  const auto = list('automations').find((x) => x.name === 'VIP to WhatsApp');
+  assert.deepEqual(auto.steps.map((x) => x.type), ['add_tag', 'chatdaddy_contact', 'send_whatsapp']);
+  assert.equal(auto.trigger_config.tag, 'vip');
+  await shot('11-automation-builder');
+  // Tag a contact with a phone number from the UI -> tag_added job -> worker sends WhatsApp.
+  await page.goto(`${SITE}/#/contacts`);
+  await page.click('#add');
+  await page.fill('.modal input[name=email]', 'vip@client.com');
+  await page.fill('.modal input[name=first_name]', 'Vera');
+  await page.fill('.modal input[name=phone]', '012-888 9999');
+  await page.fill('.modal input[name=tags]', 'vip');
+  await page.click('.modal #go');
+  await waitFor(() => waCalls.some((c) => c.url.endsWith('/messages/random/60128889999')), 'WhatsApp sent by automation', 90000);
+  assert.match(waCalls.find((c) => c.url.endsWith('/60128889999')).body.text, /Hi Vera!/);
+
+  step('inbound ChatDaddy webhook shows up as a WhatsApp reply');
+  const secret = getDoc('settings/secrets').webhook_secret;
+  G.gas.doPost({ parameter: { a: 'hook', src: 'chatdaddy', k: secret }, postData: { contents: JSON.stringify({ event: 'message-insert', data: [{ id: 'X1', chatId: '60128889999', fromMe: false, text: 'Yes please call me' }] }) } });
+  await page.goto(`${SITE}/#/replies`);
+  await page.waitForSelector('.reply-body >> text=Yes please call me');
+  await page.waitForSelector('.badge:has-text("WhatsApp")');
+
+  step('mobile layout: hamburger drawer and bottom tabs');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${SITE}/#/settings`);
+  await page.waitForSelector('.tabbar');
+  await page.waitForTimeout(400); // drawer slide-out transition
+  assert.ok(!(await page.isVisible('#sidebar .nav a[data-nav="leads"]')) || (await page.evaluate(() => document.getElementById('sidebar').getBoundingClientRect().right <= 0)));
+  await shot('12-mobile-settings');
+  await page.click('#hamburger');
+  await page.waitForFunction(() => document.body.classList.contains('drawer-open'));
+  await page.waitForTimeout(400);
+  await shot('13-mobile-drawer');
+  await page.click('#nav a[data-nav="automations"]');
+  await page.waitForFunction(() => !document.body.classList.contains('drawer-open') && location.hash === '#/automations');
+  await shot('14-mobile-automations');
+  await page.goto(`${SITE}/#/settings`);
+  await page.waitForSelector('#settings .card');
+  // Nothing (cards, inputs) may stick out past the right edge of the phone screen.
+  const overflow = await page.evaluate(() => Math.max(0, ...[...document.querySelectorAll('#view .card, #view input, #view select, #view textarea')]
+    .filter((el) => el.offsetParent).map((el) => el.getBoundingClientRect().right - window.innerWidth)));
+  assert.ok(overflow <= 1, `no horizontal page scroll on mobile (overflow ${overflow}px)`);
+  await page.setViewportSize({ width: 1400, height: 900 });
 
   step('dashboard reflects activity');
   await page.goto(`${SITE}/#/dashboard`);
@@ -231,7 +315,13 @@ async function main() {
   console.log('E2E passed. Screenshots in', SHOTS);
 }
 
-main().catch((e) => {
+let pageRef = null;
+main().catch(async (e) => {
   console.error(e);
+  if (pageRef) {
+    const toasts = await pageRef.$$eval('.toast', (els) => els.map((x) => x.textContent)).catch(() => []);
+    if (toasts.length) console.error('Toasts on screen:', toasts);
+    await pageRef.screenshot({ path: path.join(SHOTS, 'failure.png') }).catch(() => {});
+  }
   process.exit(1);
 });

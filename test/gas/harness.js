@@ -60,6 +60,12 @@ function createGas({ web, firestoreEmulator, trustJwt } = {}) {
   const inbox = []; // threads returned by GmailApp.search
   const idTokens = new Map([['admin-token', OWNER], ['stranger-token', 'stranger@gmail.test']]);
   const files = [];
+  // Gmail "Send mail as" identities of the worker account.
+  const sendAs = [
+    { sendAsEmail: OWNER, displayName: 'Owner', isPrimary: true, isDefault: true },
+    { sendAsEmail: 'sales@acme.test', displayName: 'Acme Sales', verificationStatus: 'accepted' },
+    { sendAsEmail: 'pending@acme.test', displayName: 'Pending', verificationStatus: 'pending' },
+  ];
   let gmailSeq = 0;
 
   const fetch = (url, opts = {}) => {
@@ -125,6 +131,7 @@ function createGas({ web, firestoreEmulator, trustJwt } = {}) {
           },
           get: (user, id) => ({ payload: { headers: [{ name: 'Message-ID', value: `<${id}@mail.gmail.com>` }] } }),
         },
+        Settings: { SendAs: { list: () => ({ sendAs: sendAs.slice() }) } },
       },
     },
     GmailApp: { search: () => inbox.slice() },
@@ -154,7 +161,7 @@ function createGas({ web, firestoreEmulator, trustJwt } = {}) {
     inbox.push({ getId: () => tid, getMessages: () => [msg] });
   }
 
-  return { gas: context, store, sent, triggers, inbox, receive, props, files, OWNER, WEBAPP };
+  return { gas: context, store, sent, triggers, inbox, receive, props, files, sendAs, OWNER, WEBAPP };
 }
 
 module.exports = { createGas, parseMime, curlSync };

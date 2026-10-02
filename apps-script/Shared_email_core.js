@@ -103,6 +103,20 @@
     return normaliseTags(words).slice(0, 40);
   }
 
+  /**
+   * Normalise a phone number to international digits for WhatsApp, e.g.
+   * "012-345 6789" with default country code "60" -> "60123456789".
+   */
+  function phoneKey(phone, defaultCountryCode) {
+    let d = String(phone || '').replace(/@.*$/, '').replace(/[^0-9+]/g, '');
+    if (!d) return '';
+    if (d.charAt(0) === '+') d = d.slice(1);
+    else if (d.slice(0, 2) === '00') d = d.slice(2);
+    else if (d.charAt(0) === '0' && defaultCountryCode) d = String(defaultCountryCode).replace(/\D/g, '') + d.slice(1);
+    d = d.replace(/\D/g, '');
+    return d.length >= 8 && d.length <= 15 ? d : '';
+  }
+
   function addressOf(from) {
     const m = String(from || '').match(/<([^>]+)>/);
     return (m ? m[1] : String(from || '')).trim().toLowerCase();
@@ -124,6 +138,6 @@
   return {
     CONTACT_FIELDS: CONTACT_FIELDS, SAMPLE_CONTACT: SAMPLE_CONTACT, escapeHtml: escapeHtml, contactVars: contactVars,
     merge: merge, htmlToText: htmlToText, isEmail: isEmail, emailKey: emailKey, normaliseTags: normaliseTags,
-    searchKeywords: searchKeywords, addressOf: addressOf, stripQuoted: stripQuoted,
+    searchKeywords: searchKeywords, phoneKey: phoneKey, addressOf: addressOf, stripQuoted: stripQuoted,
   };
 });

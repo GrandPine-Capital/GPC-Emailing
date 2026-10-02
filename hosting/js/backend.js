@@ -90,6 +90,13 @@ async function hasActiveTrigger(type) {
   return (await count(query(col('automations'), where('status', '==', 'active'), where('trigger_type', '==', type)))) > 0;
 }
 
+/** Queue `tag_added` automation events ([contactId, tag] pairs). */
+async function fireTagAdded(items) {
+  if (!items.length || !(await hasActiveTrigger('tag_added'))) return;
+  for (const part of chunk(items, 500)) await addDoc(col('jobs'), { type: 'tags_added', payload: { items: part.map((i) => ({ contact_id: i[0], tag: i[1] })) }, status: 'pending', created_at: nowIso() });
+  kick();
+}
+
 /** Queue `contact_added` automation events for newly added list memberships. */
 async function fireContactAdded(items) {
   if (!items.length || !(await hasActiveTrigger('contact_added'))) return;
@@ -104,8 +111,10 @@ async function fireContactAdded(items) {
 async function upsertContacts(list, { listIds = [], tags = [], source = 'manual', overwrite = false } = {}) {
   const valid = list.filter((c) => Core.isEmail(c.email)).map((c) => ({ ...c, email: Core.emailKey(c.email) }));
   const existing = await getMany('contacts', valid.map((c) => c.email));
+  const cc = (await settings()).default_country_code;
   const ops = [];
   const added = [];
+  const tagged = [];
   const facets = { countries: new Set(), industries: new Set(), tags: new Set() };
   const result = { created: 0, updated: 0, ids: [] };
   const base = Date.now();
@@ -123,10 +132,13 @@ async function upsertContacts(list, { listIds = [], tags = [], source = 'manual'
       else if (doc0[f] == null) doc0[f] = '';
     }
     if (c.status && (overwrite || !old)) doc0.status = c.status;
-    doc0.tags = Core.normaliseTags([...(doc0.tags || []), ...rowTags]);
+    const before = doc0.tags || [];
+    doc0.tags = Core.normaliseTags([...before, ...rowTags]);
+    doc0.tags.filter((t) => !before.includes(t)).forEach((t) => tagged.push([c.email, t]));
     const newLists = rowLists.filter((l) => !(doc0.list_ids || []).includes(l));
     doc0.list_ids = [...(doc0.list_ids || []), ...newLists];
     doc0.keywords = Core.searchKeywords(doc0);
+    doc0.phone_key = Core.phoneKey(doc0.phone, cc);
     delete doc0.id;
     ops.push({ type: 'set', ref: ref(`contacts/${c.email}`), data: doc0 });
     newLists.forEach((l) => added.push([c.email, l]));
@@ -139,6 +151,7 @@ async function upsertContacts(list, { listIds = [], tags = [], source = 'manual'
   await commitOps(ops);
   await addFacets(facets);
   await fireContactAdded(added);
+  await fireTagAdded(tagged);
   return result;
 }
 
@@ -298,7 +311,7 @@ function campaignStats(c) {
   return { ...s, open_rate: pct(s.opened), click_rate: pct(s.clicked), reply_rate: pct(s.replied) };
 }
 
-const CAMPAIGN_FIELDS = ['name', 'subject', 'preheader', 'template_id', 'from_name', 'reply_to'];
+const CAMPAIGN_FIELDS = ['name', 'subject', 'preheader', 'template_id', 'from_name', 'from_email', 'reply_to'];
 
 function validateAutomation(b) {
   if (!Catalog.TRIGGERS[b.trigger_type]) throw httpError(400, 'Choose a valid trigger');
@@ -306,10 +319,19 @@ function validateAutomation(b) {
     if (!Catalog.STEP_TYPES[s.type]) throw httpError(400, `Step ${i + 1}: unknown type`);
     if (s.type === 'send_email' && !s.template_id) throw httpError(400, `Step ${i + 1}: choose a template`);
     if (s.type === 'webhook' && !/^https?:\/\//.test(s.url || '')) throw httpError(400, `Step ${i + 1}: webhook URL required`);
+    if (s.type === 'send_whatsapp' && !s.text && !s.template_name) throw httpError(400, `Step ${i + 1}: enter a WhatsApp message (or a template name for the Cloud API)`);
+    if (s.type === 'notify' && ['whatsapp', 'both'].includes(s.channel) && !s.whatsapp) throw httpError(400, `Step ${i + 1}: enter the WhatsApp number to notify`);
+    if (['add_tag', 'remove_tag'].includes(s.type) && !s.tag) throw httpError(400, `Step ${i + 1}: enter a tag`);
+    if (['add_to_list', 'remove_from_list'].includes(s.type) && !s.list_id) throw httpError(400, `Step ${i + 1}: choose a list`);
+    if (s.type === 'stop_if' && ['has_tag', 'not_has_tag'].includes(s.condition) && !s.tag) throw httpError(400, `Step ${i + 1}: enter the tag to check`);
   });
 }
 
-const SECRET_KEYS = ['hunter_api_key', 'apollo_api_key', 'google_cse_key', 'google_cse_cx'];
+const SECRET_KEYS = ['hunter_api_key', 'apollo_api_key', 'google_cse_key', 'google_cse_cx', 'chatdaddy_token', 'whatsapp_token'];
+const APP_TEXT_SETTINGS = ['from_name', 'reply_to', 'company_address', 'site_url', 'tracking_url', 'crawler_user_agent', 'default_from_email',
+  'default_country_code', 'whatsapp_provider', 'chatdaddy_account_id', 'whatsapp_phone_number_id', 'whatsapp_template_language'];
+const isAdminRole = (role) => role === 'owner' || role === 'admin';
+const randomHex = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, '0')).join('');
 const NUMERIC_SETTINGS = ['daily_limit', 'per_run_limit'];
 
 // ------------------------------------------------------------------ routes
@@ -322,7 +344,7 @@ on('GET', /^\/meta$/, async () => {
   const last = status.last_tick ? Date.parse(status.last_tick) : 0;
   return {
     triggers: Catalog.TRIGGERS, stepTypes: Catalog.STEP_TYPES, countries: Catalog.COUNTRIES, industries: Catalog.INDUSTRIES,
-    mergeTags: Catalog.MERGE_TAGS, dryRun: !!s.dry_run, workerConfigured: !!s.tracking_url,
+    mergeTags: Catalog.MERGE_TAGS, stopConditions: Catalog.STOP_CONDITIONS, role: (await me()).role, dryRun: !!s.dry_run, workerConfigured: !!s.tracking_url,
     workerOnline: Date.now() - last < 15 * 60e3, lastTick: status.last_tick || null, account: status.account || '',
     remainingToday: status.remaining_today ?? null,
   };
@@ -437,10 +459,12 @@ on('GET', /^\/contacts\/facets$/, async () => {
 });
 on('GET', /^\/contacts\/([^/]+)$/, async ([id]) => {
   const c = await mustGet(`contacts/${decodeURIComponent(id)}`, 'Contact');
-  const [messages, replies] = await Promise.all([
+  const [messages, replies, whatsapp] = await Promise.all([
     rows(query(col('messages'), where('contact_id', '==', c.id), orderBy('created_at', 'desc'), limit(50))),
     rows(query(col('replies'), where('contact_id', '==', c.id), orderBy('received_at', 'desc'), limit(20))),
+    rows(query(col('whatsapp'), where('contact_id', '==', c.id), orderBy('created_at', 'desc'), limit(30))),
   ]);
+  c.whatsapp = whatsapp;
   c.tags = c.tags || [];
   c.list_ids = c.list_ids || [];
   c.messages = messages.map((m) => ({ ...m, campaign: m.campaign_name }));
@@ -465,10 +489,13 @@ on('PUT', /^\/contacts\/([^/]+)$/, async ([raw], b) => {
     added = wanted.filter((l) => !(c.list_ids || []).includes(l));
     next.list_ids = wanted;
   }
+  // WhatsApp-only contacts (id "wa-<phone>") have no email until one is added.
   const newId = b.email && Core.emailKey(b.email) !== id ? Core.emailKey(b.email) : id;
-  if (!Core.isEmail(newId)) throw httpError(400, 'Invalid email');
-  next.email = newId;
+  if (newId !== id && !Core.isEmail(newId)) throw httpError(400, 'Invalid email');
+  next.email = Core.isEmail(newId) ? newId : '';
   next.keywords = Core.searchKeywords(next);
+  next.phone_key = Core.phoneKey(next.phone, (await settings()).default_country_code);
+  const newTags = (next.tags || []).filter((t) => !(c.tags || []).includes(t));
   if (newId !== id) {
     if ((await getDoc(ref(`contacts/${newId}`))).exists()) throw httpError(400, 'Another contact already uses that email');
     await setDoc(ref(`contacts/${newId}`), next);
@@ -476,6 +503,7 @@ on('PUT', /^\/contacts\/([^/]+)$/, async ([raw], b) => {
   } else await setDoc(ref(`contacts/${id}`), next);
   await addFacets({ countries: new Set([next.country].filter(Boolean)), industries: new Set([next.industry].filter(Boolean)), tags: new Set(next.tags) });
   await fireContactAdded(added.map((l) => [newId, l]));
+  await fireTagAdded(newTags.map((t) => [newId, t]));
   return mustGet(`contacts/${newId}`, 'Contact');
 });
 on('DELETE', /^\/contacts\/([^/]+)$/, async ([id]) => { await deleteDoc(ref(`contacts/${decodeURIComponent(id)}`)); return { ok: true }; });
@@ -493,7 +521,10 @@ on('POST', /^\/contacts\/bulk$/, async (_, b) => {
   if (!make) throw httpError(400, `Unknown action ${b.action}`);
   if (b.action === 'add_tag' && !b.tag) throw httpError(400, 'Enter a tag');
   await commitOps(ids.map((id) => make(ref(`contacts/${id}`))));
-  if (b.action === 'add_tag') await addFacets({ tags: new Set([b.tag]) });
+  if (b.action === 'add_tag') {
+    await addFacets({ tags: new Set([b.tag]) });
+    await fireTagAdded(ids.map((id) => [id, b.tag]));
+  }
   return { ok: true, count: ids.length };
 });
 on('POST', /^\/contacts\/import$/, async (_, form) => {
@@ -557,7 +588,7 @@ on('GET', /^\/campaigns\/([\w-]+)\/messages$/, async ([id], _, qp) => {
 on('POST', /^\/campaigns$/, async (_, b) => {
   const doc0 = {
     name: b.name || 'Untitled campaign', subject: b.subject || '', preheader: b.preheader || '', template_id: b.template_id || null,
-    from_name: b.from_name || '', reply_to: b.reply_to || '', list_ids: (b.list_ids || []).map(String),
+    from_name: b.from_name || '', from_email: b.from_email || '', reply_to: b.reply_to || '', list_ids: (b.list_ids || []).map(String),
     status: 'draft', stats: {}, created_at: nowIso(),
   };
   const r = await addDoc(col('campaigns'), doc0);
@@ -609,7 +640,7 @@ on('POST', /^\/campaigns\/([\w-]+)\/duplicate$/, async ([id]) => {
   const c = await mustGet(`campaigns/${id}`, 'Campaign');
   const r = await addDoc(col('campaigns'), {
     name: `${c.name} (copy)`, subject: c.subject || '', preheader: c.preheader || '', template_id: c.template_id || null,
-    from_name: c.from_name || '', reply_to: c.reply_to || '', list_ids: c.list_ids || [], status: 'draft', stats: {}, created_at: nowIso(),
+    from_name: c.from_name || '', from_email: c.from_email || '', reply_to: c.reply_to || '', list_ids: c.list_ids || [], status: 'draft', stats: {}, created_at: nowIso(),
   });
   return { id: r.id };
 });
@@ -718,25 +749,57 @@ on('POST', /^\/leads\/searches\/([\w-]+)\/import$/, async ([id], b) => {
 });
 
 // settings
+// signed-in user
+let meCache = null;
+async function me(force = false) {
+  if (!meCache || force) {
+    const email = String(auth.currentUser?.email || '').toLowerCase();
+    const d = data(await getDoc(ref(`admins/${email}`))) || {};
+    meCache = { email, role: d.role || 'owner', name: d.name || '' };
+  }
+  return meCache;
+}
+async function requireAdmin() {
+  if (!isAdminRole((await me()).role)) throw httpError(403, 'Only admins can change this');
+}
+on('GET', /^\/me$/, () => me(true));
+
+// settings
 on('GET', /^\/settings$/, async () => {
-  const [app, secrets, status] = await Promise.all([settings(true), getDoc(ref('settings/secrets')), getDoc(ref('settings/status'))]);
-  const sec = data(secrets) || {};
-  const out = { ...app, status: data(status) || {} };
-  for (const k of SECRET_KEYS) out[k] = sec[k] ? (k === 'google_cse_cx' ? sec[k] : '********') : '';
+  const user = await me();
+  const admin = isAdminRole(user.role);
+  const [app, status, senders, secretsSnap] = await Promise.all([
+    settings(true), getDoc(ref('settings/status')), getDoc(ref('settings/senders')),
+    admin ? getDoc(ref('settings/secrets')) : Promise.resolve(null),
+  ]);
+  const sec = (secretsSnap && data(secretsSnap)) || {};
+  const out = { ...app, status: data(status) || {}, senders: (data(senders) || {}).list || [], senders_updated_at: (data(senders) || {}).updated_at || null, can_edit: admin };
+  for (const k of SECRET_KEYS) out[k] = sec[k] || '';
+  out.webhook_secret = sec.webhook_secret || '';
+  const base = app.tracking_url || '';
+  out.chatdaddy_webhook_url = base && sec.webhook_secret ? `${base}?a=hook&src=chatdaddy&k=${sec.webhook_secret}` : '';
+  out.generic_webhook_url = base && sec.webhook_secret ? `${base}?a=hook&k=${sec.webhook_secret}` : '';
   return out;
 });
 on('PUT', /^\/settings$/, async (_, b) => {
+  await requireAdmin();
   const app = {};
   const sec = {};
   for (const [k, v] of Object.entries(b)) {
-    if (SECRET_KEYS.includes(k)) { if (v !== '********') sec[k] = v; }
-    else if (NUMERIC_SETTINGS.includes(k)) app[k] = Number(v) || 0;
+    if (SECRET_KEYS.includes(k)) sec[k] = String(v || '').trim();
+    else if (NUMERIC_SETTINGS.includes(k)) app[k] = Math.max(0, Number(v) || 0);
     else if (k === 'dry_run') app[k] = v === true || v === 'true';
-    else if (['from_name', 'reply_to', 'company_address', 'site_url', 'tracking_url', 'crawler_user_agent'].includes(k)) app[k] = String(v).trim();
+    else if (APP_TEXT_SETTINGS.includes(k)) app[k] = String(v ?? '').trim();
   }
+  if (app.default_country_code) app.default_country_code = app.default_country_code.replace(/\D/g, '');
   await setDoc(ref('settings/app'), app, { merge: true });
   if (Object.keys(sec).length) await setDoc(ref('settings/secrets'), sec, { merge: true });
   await settings(true);
+  return { ok: true };
+});
+on('POST', /^\/settings\/webhook-secret$/, async () => {
+  await requireAdmin();
+  await setDoc(ref('settings/secrets'), { webhook_secret: randomHex(24) }, { merge: true });
   return { ok: true };
 });
 on('POST', /^\/settings\/check$/, async () => {
@@ -746,6 +809,49 @@ on('POST', /^\/settings\/check$/, async () => {
   } catch (e) {
     return { ok: false, message: e.message };
   }
+});
+on('POST', /^\/senders\/refresh$/, async () => {
+  const r = await worker('senders');
+  return { ok: true, senders: r.senders };
+});
+on('POST', /^\/integrations\/test-whatsapp$/, async (_, b) => {
+  if (!Core.phoneKey(b.phone, (await settings()).default_country_code)) throw httpError(400, 'Enter a WhatsApp number, e.g. +60123456789');
+  await worker('test_whatsapp', { phone: b.phone, provider: b.provider });
+  return { ok: true };
+});
+
+// team (who can sign in)
+on('GET', /^\/team$/, async () => {
+  const list = await rows(col('admins'));
+  const order = { owner: 0, admin: 1, member: 2 };
+  return list.map((u) => ({ ...u, email: u.id, role: u.role || 'owner' }))
+    .sort((a, b) => order[a.role] - order[b.role] || a.email.localeCompare(b.email));
+});
+on('POST', /^\/team$/, async (_, b) => {
+  await requireAdmin();
+  const email = Core.emailKey(b.email);
+  if (!Core.isEmail(email)) throw httpError(400, 'Enter a valid email address');
+  if ((await getDoc(ref(`admins/${email}`))).exists()) throw httpError(400, `${email} already has access`);
+  const role = b.role === 'admin' ? 'admin' : 'member';
+  await setDoc(ref(`admins/${email}`), { email, role, name: String(b.name || '').trim(), added_by: (await me()).email, created_at: nowIso() });
+  return { ok: true };
+});
+on('PUT', /^\/team\/([^/]+)$/, async ([raw], b) => {
+  await requireAdmin();
+  const email = decodeURIComponent(raw);
+  const u = await mustGet(`admins/${email}`, 'User');
+  if ((u.role || 'owner') === 'owner') throw httpError(400, 'The owner role cannot be changed');
+  await updateDoc(ref(`admins/${email}`), { role: b.role === 'admin' ? 'admin' : 'member' });
+  return { ok: true };
+});
+on('DELETE', /^\/team\/([^/]+)$/, async ([raw]) => {
+  await requireAdmin();
+  const email = decodeURIComponent(raw);
+  const u = await mustGet(`admins/${email}`, 'User');
+  if ((u.role || 'owner') === 'owner') throw httpError(400, 'The owner cannot be removed');
+  if (email === (await me()).email) throw httpError(400, 'You cannot remove yourself');
+  await deleteDoc(ref(`admins/${email}`));
+  return { ok: true };
 });
 
 /** Dispatch an API call. `path` may include a query string. */

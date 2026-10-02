@@ -4,6 +4,7 @@ const App = (() => {
   const routes = [];
   let meta = null;
   let cleanup = null;
+  let navToken = 0;
 
   const esc = (s) =>
     String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -125,19 +126,30 @@ const App = (() => {
       try { cleanup(); } catch { /* ignore */ }
       cleanup = null;
     }
-    const section = hash.split('/')[1];
-    document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.nav === section));
+    const section = (hash.split('/')[1] || '').split('?')[0];
+    document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === section));
+    const navLink = document.querySelector(`#nav a[data-nav="${section}"]`);
+    const tb = document.getElementById('tb-title');
+    if (tb && navLink) tb.textContent = navLink.textContent.trim();
+    closeDrawer();
+    const token = ++navToken;
     for (const r of routes) {
       const m = hash.match(r.pattern);
       if (m) {
-        view().innerHTML = '<div class="empty">Loading…</div>';
+        // Each navigation renders into its own container, so a slow page that
+        // finishes after the user moved on writes into a detached element.
+        const container = document.createElement('div');
+        container.innerHTML = '<div class="empty">Loading…</div>';
+        view().replaceChildren(container);
         try {
-          cleanup = (await r.render(view(), ...m.slice(1))) || null;
+          const done = (await r.render(container, ...m.slice(1))) || null;
+          if (token === navToken) cleanup = done;
+          else if (done) done();
         } catch (err) {
           console.error(err);
-          view().innerHTML = `<div class="card"><h2>Something went wrong</h2><p>${esc(err.message)}</p></div>`;
+          if (token === navToken) container.innerHTML = `<div class="card"><h2>Something went wrong</h2><p>${esc(err.message)}</p></div>`;
         }
-        window.scrollTo(0, 0);
+        if (token === navToken) window.scrollTo(0, 0);
         return;
       }
     }
@@ -147,6 +159,44 @@ const App = (() => {
   function start() {
     window.addEventListener('hashchange', navigate);
     navigate();
+  }
+
+  function openDrawer() {
+    document.body.classList.add('drawer-open');
+    document.getElementById('hamburger')?.setAttribute('aria-expanded', 'true');
+  }
+  function closeDrawer() {
+    document.body.classList.remove('drawer-open');
+    document.getElementById('hamburger')?.setAttribute('aria-expanded', 'false');
+  }
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('#hamburger')) openDrawer();
+    else if (e.target.closest('#scrim') || e.target.closest('#nav a')) closeDrawer();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+
+  const icon = (name, size) => window.Icons.svg(name, size);
+
+  /**
+   * Standard page header: title (+ badge), subtitle, optional back link, actions (HTML).
+   */
+  function pageHead({ title, badge = '', subtitle = '', back = null, actions = '' }) {
+    return `<div class="page-head"><div style="min-width:0">
+      ${back ? `<a class="back" href="${back.href}">${icon('chevron-left', 16)}${esc(back.label)}</a>` : ''}
+      <div class="title-row"><h1>${title}</h1>${badge}</div>
+      ${subtitle ? `<div class="subtitle">${subtitle}</div>` : ''}
+    </div><div class="actions">${actions}</div></div>`;
+  }
+
+  /** Card with the icon-tile header used across the app. */
+  function cardHead({ icon: ic, tone = '', title, sub = '', aside = '' }) {
+    return `<div class="card-head"><div class="icon-tile ${tone}">${icon(ic, 20)}</div>
+      <div class="ttl"><h2>${title}</h2>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${aside}</div>`;
+  }
+
+  /** Uppercase field label with an optional right-hand hint (as in the design). */
+  function fieldLabel(label, aside = '', forId = '') {
+    return `<div class="field-label"><label ${forId ? `for="${forId}"` : ''}>${label}</label>${aside ? `<span class="aside">${aside}</span>` : ''}</div>`;
   }
 
   const debounce = (fn, ms = 300) => {
@@ -159,5 +209,8 @@ const App = (() => {
 
   const setBackend = (fn) => { backend = fn; };
 
-  return { api, setBackend, esc, toast, modal, confirmDialog, formData, fmtDate, statusBadge, chips, chipValues, getMeta, route, start, navigate, debounce };
+  const me = { email: '', role: 'member' };
+  const isAdmin = () => me.role === 'owner' || me.role === 'admin';
+
+  return { api, setBackend, me, isAdmin, icon, pageHead, cardHead, fieldLabel, openDrawer, closeDrawer, esc, toast, modal, confirmDialog, formData, fmtDate, statusBadge, chips, chipValues, getMeta, route, start, navigate, debounce };
 })();

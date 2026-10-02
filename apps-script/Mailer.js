@@ -45,13 +45,38 @@ var Mailer = (function () {
    */
   function send(m) {
     const s = CONFIG.settings();
-    const msg = Object.assign({ fromEmail: CONFIG.senderEmail(), fromName: s.from_name, replyTo: s.reply_to }, m);
+    const msg = {};
+    Object.keys(m).forEach(function (k) {
+      if (m[k] !== undefined && m[k] !== null && m[k] !== '') msg[k] = m[k];
+    });
+    const from = resolveFrom(msg.fromEmail || s.default_from_email);
+    msg.fromEmail = from.email;
+    msg.fromName = msg.fromName || from.name || s.from_name;
+    msg.replyTo = msg.replyTo || s.reply_to || undefined;
     if (s.dry_run && !m.force) return { id: 'dry-' + newToken(), threadId: 'dry-' + newToken(), dryRun: true };
     const raw = Utilities.base64EncodeWebSafe(Utilities.newBlob(buildMime(msg)).getBytes());
     const resource = { raw: raw };
     if (m.threadId) resource.threadId = m.threadId;
     const res = Gmail.Users.Messages.send(resource, 'me');
     return { id: res.id, threadId: res.threadId, dryRun: false };
+  }
+
+  let sendersCache = null;
+  /**
+   * Pick the From address. Any verified Gmail "Send mail as" alias of the
+   * worker's account may be used; anything else is rejected by design
+   * (Gmail would rewrite or refuse it).
+   */
+  function resolveFrom(requested) {
+    const account = String(CONFIG.senderEmail()).toLowerCase();
+    const want = String(requested || '').trim().toLowerCase();
+    if (!want || want === account) return { email: account, name: '' };
+    if (!sendersCache) sendersCache = Integrations.allowedSenders();
+    if (sendersCache.emails.indexOf(want) < 0) {
+      throw new Error(want + ' is not a verified "Send mail as" address of ' + account + ' (Settings → Sender identities)');
+    }
+    const entry = sendersCache.list.filter(function (x) { return x.email === want; })[0] || {};
+    return { email: want, name: entry.name || '' };
   }
 
   /** RFC Message-ID header of a sent Gmail message (needed to thread replies). */
@@ -79,5 +104,9 @@ var Mailer = (function () {
     return Math.max(0, Math.min(own, google));
   }
 
-  return { send: send, buildMime: buildMime, rfcMessageId: rfcMessageId, remainingToday: remainingToday };
+  function reset() {
+    sendersCache = null;
+  }
+
+  return { reset: reset, resolveFrom: resolveFrom, send: send, buildMime: buildMime, rfcMessageId: rfcMessageId, remainingToday: remainingToday };
 })();
