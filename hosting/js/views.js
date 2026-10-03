@@ -62,7 +62,7 @@
     const list = await api.get('/templates');
     root.innerHTML = `
       <div class="page-head"><div><h1>Templates</h1><div class="subtitle">Design emails with drag &amp; drop or HTML. Standard templates included.</div></div>
-        <div class="actions"><a class="btn" href="#/templates/new-html">${App.icon('code', 17)}New HTML template</a><a class="btn primary" href="#/templates/new-dragdrop">${App.icon('plus', 17)}New drag &amp; drop template</a></div></div>
+        <div class="actions"><a class="btn" href="#/templates/library">${App.icon('sparkles', 17)}Template library</a><a class="btn" href="#/templates/new-html">${App.icon('code', 17)}New HTML template</a><a class="btn primary" href="#/templates/new-dragdrop">${App.icon('plus', 17)}New drag &amp; drop template</a></div></div>
       <div class="tpl-grid">${list.map((t) => `
         <div class="tpl-card" data-id="${t.id}">
           <div class="tpl-thumb" data-open><iframe loading="lazy" sandbox="" data-html="${t.id}"></iframe></div>
@@ -416,7 +416,12 @@
         Only email people you have a lawful basis to contact, include an unsubscribe link (added automatically), and follow local rules (GDPR, PDPA, CAN-SPAM, CASL).</div>
       <div class="card" id="lf">
         <div class="field"><label>Countries <span class="hint" id="cc"></span></label><input type="search" id="cfilter" placeholder="Filter countries…" style="margin-bottom:6px">${chips('countries', meta.countries.map((c) => ({ value: c.code, label: c.name })))}</div>
-        <div class="field"><label>Industries</label>${chips('industries', meta.industries)}
+        <div class="field"><label>Industries <span class="hint" id="ic"></span></label>
+          ${Object.entries((meta.focusIndustries || []).reduce((g, i) => ((g[i.group] = g[i.group] || []).push(i), g), {})).map(([group, items]) => `
+            <div class="ind-group"><div class="ind-head"><b>${esc(group)}</b><button type="button" class="link-btn" data-allgroup="${esc(group)}">Select all</button></div>
+              <div class="chips" data-chips="industries" data-group="${esc(group)}">${items.map((i) => `<span class="chip" data-value="${esc(i.name)}" title="Searches: ${esc(i.keywords.join(', '))}">${esc(i.name)}</span>`).join('')}</div></div>`).join('')}
+          <details class="ind-group"><summary class="muted">Other industries</summary>
+            ${chips('industries', meta.industries.filter((n) => !(meta.focusIndustries || []).some((f) => f.name === n)))}</details>
           <input type="text" id="custom-ind" placeholder="Add a custom industry and press Enter" style="margin-top:6px"></div>
         <div class="row"><div class="field"><label>Extra keywords <span class="hint">(optional)</span></label><input type="text" name="keywords" placeholder="e.g. SME, distributor, Kuala Lumpur"></div>
           <div class="field" style="max-width:150px"><label>Max emails</label><input type="number" name="limit" value="100" min="1" max="1000"></div>
@@ -439,6 +444,17 @@
     const countCountries = () => { lf.querySelector('#cc').textContent = `${chipValues(lf, 'countries').length} selected`; };
     cchips.addEventListener('change', countCountries);
     countCountries();
+    const countIndustries = () => { lf.querySelector('#ic').textContent = `${chipValues(lf, 'industries').length} selected · focus industries search several related phrases each`; };
+    lf.querySelectorAll('[data-chips="industries"]').forEach((c) => c.addEventListener('change', countIndustries));
+    countIndustries();
+    lf.querySelectorAll('[data-allgroup]').forEach((b) => (b.onclick = () => {
+      const chipsEl = lf.querySelector(`[data-chips="industries"][data-group="${b.dataset.allgroup}"]`);
+      const all = [...chipsEl.querySelectorAll('.chip')];
+      const on = !all.every((c) => c.classList.contains('on'));
+      all.forEach((c) => c.classList.toggle('on', on));
+      b.textContent = on ? 'Clear' : 'Select all';
+      countIndustries();
+    }));
     lf.querySelector('#cfilter').oninput = (e) => {
       const q = e.target.value.toLowerCase();
       cchips.querySelectorAll('.chip').forEach((c) => { c.style.display = c.textContent.toLowerCase().includes(q) ? '' : 'none'; });

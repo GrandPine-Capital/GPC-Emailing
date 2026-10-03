@@ -26,6 +26,38 @@
     return `<input type="${type}" ${attrs}>`;
   }
 
+  /** Step-by-step guide for adding another sending/receiving address. */
+  function connectGuide(account) {
+    const acct = esc(account || 'your worker Gmail account');
+    App.modal(`<div class="row" style="align-items:center;margin-bottom:6px"><h2 style="margin:0;flex:1">Connect an email address</h2><button class="btn icon ghost" data-close>${icon('x', 18)}</button></div>
+      <p class="muted">Any address you connect can <b>send</b> campaigns and automations, and email sent <b>to</b> it can be auto-replied. Everything runs through ${acct}.</p>
+      <div class="seg" id="guide-seg" style="margin-bottom:16px"><button class="on" data-tab="google">Gmail / Google Workspace</button><button data-tab="other">Other provider (cPanel, Outlook, Zoho…)</button></div>
+      <div data-pane="google">
+        <ol style="line-height:1.9;padding-left:20px;margin-top:0">
+          <li>Open <a href="https://mail.google.com/mail/u/0/#settings/accounts" target="_blank" rel="noopener">Gmail → Settings → Accounts and Import</a> signed in as <b>${acct}</b>.</li>
+          <li>Under <b>Send mail as</b>, click <b>Add another email address</b>, enter the name and address, keep <i>Treat as an alias</i> ticked.</li>
+          <li>For a Google Workspace alias of the same user it is verified instantly. For another Gmail address, Google emails a confirmation link to that address - open it.</li>
+          <li><b>Receiving:</b> in the other Gmail account go to Settings → <b>Forwarding and POP/IMAP</b> → <b>Add a forwarding address</b> = ${acct}, confirm, and choose <i>Forward a copy</i>.</li>
+          <li>Come back here and click <b>Refresh from Gmail</b>. The address appears as <span class="badge green">Verified</span>.</li>
+        </ol></div>
+      <div data-pane="other" style="display:none">
+        <ol style="line-height:1.9;padding-left:20px;margin-top:0">
+          <li>In <a href="https://mail.google.com/mail/u/0/#settings/accounts" target="_blank" rel="noopener">Gmail → Settings → Accounts and Import</a> (as <b>${acct}</b>) click <b>Add another email address</b> under <b>Send mail as</b>.</li>
+          <li>Enter the address (e.g. <code>info@yourcompany.com</code>), untick <i>Treat as an alias</i> if it is a separate mailbox, then enter your provider's <b>SMTP server</b>, port (usually 465 SSL or 587 TLS), username and password.</li>
+          <li>Gmail sends a confirmation code to that address - enter it.</li>
+          <li><b>Receiving:</b> in your provider's control panel (cPanel → Forwarders, Outlook → Rules → Forward, Zoho → Mail forwarding) forward incoming email to <b>${acct}</b>, keeping a copy if you like.</li>
+          <li>Click <b>Refresh from Gmail</b> here. Send a test email to the address - "last email received" updates within 5 minutes.</li>
+        </ol>
+        <p class="hint">Using your domain's own SMTP improves deliverability: also set SPF/DKIM for your domain as your provider recommends.</p></div>
+      <div class="foot"><button class="btn primary" data-close>Done</button></div>`, {
+      wide: true,
+      onMount: (el) => el.querySelectorAll('#guide-seg button').forEach((b) => (b.onclick = () => {
+        el.querySelectorAll('#guide-seg button').forEach((x) => x.classList.toggle('on', x === b));
+        el.querySelectorAll('[data-pane]').forEach((p) => { p.style.display = p.dataset.pane === b.dataset.tab ? '' : 'none'; });
+      })),
+    });
+  }
+
   App.route(/^#\/settings$/, async (root) => {
     const [s, meta, team] = await Promise.all([api.get('/settings'), App.getMeta(true), api.get('/team')]);
     const st = s.status || {};
@@ -36,6 +68,7 @@
       ? '<span class="badge red lg">Not connected</span>'
       : meta.workerOnline ? `<span class="badge green lg"><span class="dot"></span>Synced</span>` : '<span class="badge yellow lg">Idle</span>';
     const senders = s.senders || [];
+    const lastSeen = Object.fromEntries((s.inbox || []).map((x) => [x.email, x.last_received_at]));
     const account = meta.account || st.account || '';
 
     root.innerHTML = `
@@ -102,7 +135,7 @@
           ${cardHead({ icon: 'at', title: 'Sender identities', sub: 'Send campaigns and automations from different email addresses', aside: `<span class="badge outline lg">${senders.filter((x) => x.verified).length || 1} verified</span>` })}
           <div id="senders">${senders.length ? senders.map((x) => `
             <div class="list-row"><div class="avatar">${esc(initials(x.email))}</div>
-              <div class="grow"><div class="truncate"><b>${esc(x.email)}</b></div><div class="muted" style="font-size:13px">${esc(x.name || '—')}</div></div>
+              <div class="grow"><div class="truncate"><b>${esc(x.email)}</b></div><div class="muted" style="font-size:13px">${esc(x.name || '—')} · ${lastSeen[x.email] ? `last email received ${fmtDate(lastSeen[x.email])}` : 'no email received yet'}</div></div>
               ${x.primary ? '<span class="badge blue">Primary</span>' : ''}
               ${x.verified ? '<span class="badge green">Verified</span>' : '<span class="badge yellow">Pending verification</span>'}
             </div>`).join('') : `<p class="muted">No identities loaded yet. Click <b>Refresh from Gmail</b>.</p>`}</div>
@@ -110,7 +143,8 @@
             <select name="default_from_email"><option value="">${esc(account || 'Worker account')} (account)</option>
               ${senders.filter((x) => x.verified && !x.primary).map((x) => `<option value="${esc(x.email)}" ${s.default_from_email === x.email ? 'selected' : ''}>${esc(x.email)}${x.name ? ` — ${esc(x.name)}` : ''}</option>`).join('')}</select>
             <div class="hint">Campaigns and automation emails can also pick their own address. Add addresses in Gmail → Settings → Accounts → "Send mail as" (verify them), then refresh${s.senders_updated_at ? ` · last refreshed ${fmtDate(s.senders_updated_at)}` : ''}.</div></div>
-          <button type="button" class="btn" id="refresh-senders">${icon('refresh', 16)}Refresh from Gmail</button>
+          <div class="row"><button type="button" class="btn primary" id="connect-email">${icon('plus', 16)}Connect an email address</button>
+            <button type="button" class="btn" id="refresh-senders">${icon('refresh', 16)}Refresh from Gmail</button></div>
         </section>
 
         <section class="card">
@@ -224,6 +258,7 @@
       toast(`Worker finished: ${JSON.stringify(r.summary || {})}`);
       App.navigate();
     };
+    root.querySelector('#connect-email').onclick = () => connectGuide(account);
     root.querySelector('#refresh-senders').onclick = async () => {
       const r = await api.post('/senders/refresh');
       toast(`${r.senders.length} sender identit${r.senders.length === 1 ? 'y' : 'ies'} loaded from Gmail`);

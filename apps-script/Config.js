@@ -67,6 +67,7 @@ var CONFIG = (function () {
     chatdaddy_account_id: 'random',
     whatsapp_phone_number_id: '',
     whatsapp_template_language: 'en',
+    timezone: 'Asia/Kuala_Lumpur',
   };
 
   function settings() {

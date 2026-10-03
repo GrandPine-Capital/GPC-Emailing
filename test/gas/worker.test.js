@@ -459,3 +459,129 @@ test('WhatsApp-only contacts are skipped by email campaigns', () => {
   assert.equal(sent.length, 1);
   assert.equal(store.doc('campaigns/C').stats.total, 1);
 });
+
+// ------------------------------------------------------------------ v4: auto-reply, inbound, industries
+function autoreplyRule(store, extra = {}) {
+  store.put(`autoreplies/${extra.id || 'R1'}`, {
+    name: 'Thanks', enabled: true, order: 0, to_address: '', audience: 'all', keywords: '', exclude: '',
+    template_id: templateId(store, 'Thank You for Your Reply'), keep_thread: true, from_mode: 'recipient',
+    cooldown_hours: 24, schedule: { mode: 'always' }, timezone: 'Asia/Kuala_Lumpur', created_at: now(), ...extra,
+  });
+}
+
+test('auto-reply: replies once per sender, in thread, from the address they wrote to, and saves the contact', () => {
+  const { gas, store, sent, receive } = createGas();
+  gas.setup();
+  store.put('lists/ENQ', { name: 'Enquiries' });
+  autoreplyRule(store, { create_contact: true, list_id: 'ENQ', tags: 'enquiry' });
+  const r1 = receive({ from: 'Jane Lim <jane@prospect.test>', to: 'Acme Sales <sales@acme.test>', subject: 'Course fees?', body: 'Hi, how much is the course?' });
+  gas.tick();
+  assert.equal(sent.length, 1);
+  const reply = sent[0];
+  assert.match(reply.to, /jane@prospect\.test/);
+  assert.equal(reply.headers.from, '"Acme Sales" <sales@acme.test>', 'replies from the alias that received the email');
+  assert.equal(reply.subject, 'Re: Course fees?');
+  assert.equal(reply.threadId, r1.threadId);
+  assert.equal(reply.headers['in-reply-to'], r1.rfcMessageId);
+  assert.equal(reply.headers['auto-submitted'], 'auto-replied');
+  assert.equal(reply.headers['list-unsubscribe'], undefined);
+  assert.match(reply.html, /Hi Jane,/);
+  const c = store.doc('contacts/jane@prospect.test');
+  assert.deepEqual([c.first_name, c.last_name, c.list_ids, c.tags], ['Jane', 'Lim', ['ENQ'], ['enquiry']]);
+  const log = store.doc(`inbound/g-${r1.id}`);
+  assert.equal(log.status, 'replied');
+  assert.equal(log.autoreply_rule, 'R1');
+  assert.equal(store.doc('autoreplies/R1').replied_count, 1);
+
+  // Same message seen again -> not processed twice; a new email within the cooldown -> no second reply.
+  gas.tick();
+  receive({ from: 'jane@prospect.test', to: 'sales@acme.test', subject: 'One more thing', body: 'Also, do you have weekend classes?' });
+  gas.tick();
+  assert.equal(sent.length, 1);
+  const second = store.collection('inbound').find((d) => d.subject === 'One more thing');
+  assert.equal(second.status, 'skipped');
+  assert.match(second.reason, /already auto-replied/);
+});
+
+test('auto-reply never answers newsletters, no-reply senders, other auto-responders or ourselves', () => {
+  const { gas, store, sent, receive } = createGas();
+  gas.setup();
+  autoreplyRule(store);
+  receive({ from: 'News <news@shop.test>', subject: 'Big sale', body: 'x', headers: { 'List-Unsubscribe': '<mailto:u@shop.test>' } });
+  receive({ from: 'noreply@bank.test', subject: 'Statement', body: 'x' });
+  receive({ from: 'Bob <bob@x.test>', subject: 'Out of office', body: 'x', headers: { 'Auto-Submitted': 'auto-replied' } });
+  receive({ from: 'owner@gmail.test', subject: 'note to self', body: 'x' });
+  receive({ from: 'Sales <sales@acme.test>', subject: 'from my alias', body: 'x' });
+  gas.tick();
+  assert.equal(sent.length, 0);
+  const reasons = store.collection('inbound').map((d) => d.reason).sort();
+  assert.deepEqual(reasons, ['auto-submitted', 'mailing list or newsletter', 'no-reply sender']);
+});
+
+test('auto-reply rule filters: address, audience, keywords and office-hours schedule', () => {
+  const { gas, store, sent, receive } = createGas();
+  gas.setup();
+  contact(store, 'known@client.test', { first_name: 'Kim' });
+  // Only for email to sales@, only new senders, only when mentioning "price".
+  autoreplyRule(store, { id: 'SALES', to_address: 'sales@acme.test', audience: 'new', keywords: 'price, fee' });
+  receive({ from: 'a@new.test', to: 'owner@gmail.test', subject: 'price?', body: '' }); // wrong address
+  receive({ from: 'known@client.test', to: 'sales@acme.test', subject: 'price?', body: '' }); // already a contact
+  receive({ from: 'b@new.test', to: 'sales@acme.test', subject: 'hello', body: 'just saying hi' }); // no keyword
+  receive({ from: 'c@new.test', to: 'sales@acme.test', subject: 'Fee', body: 'what is the fee' }); // match
+  gas.tick();
+  assert.deepEqual(sent.map((m) => m.to.replace(/.*</, '').replace('>', '')), ['c@new.test']);
+
+  // After-hours rule: Saturday 10:00 in Kuala Lumpur is outside Mon-Fri 09:00-18:00.
+  store.put('autoreplies/SALES', { ...store.doc('autoreplies/SALES'), enabled: false });
+  autoreplyRule(store, { id: 'AFTER', schedule: { mode: 'outside', days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00' } });
+  const saturday = new Date('2026-10-03T02:00:00Z'); // Sat 10:00 MYT
+  const tuesday = new Date('2026-10-06T02:00:00Z'); // Tue 10:00 MYT
+  gas.CONFIG.reset();
+  assert.equal(gas.AutoReply.inSchedule(store.doc('autoreplies/AFTER'), saturday), true);
+  assert.equal(gas.AutoReply.inSchedule(store.doc('autoreplies/AFTER'), tuesday), false);
+  // Messages must also be newer than the last poll, so use "now" for the end-to-end path.
+  receive({ from: 'weekend@new.test', subject: 'hi', body: '' });
+  gas.AutoReply.reset();
+  gas.tick();
+  const expectReply = gas.AutoReply.inSchedule(store.doc('autoreplies/AFTER'), new Date());
+  assert.equal(sent.some((m) => m.to.includes('weekend@new.test')), expectReply);
+});
+
+test('"Any email received" trigger can reply in the same thread', () => {
+  const { gas, store, sent, receive } = createGas();
+  gas.setup();
+  contact(store, 'kim@client.test', { first_name: 'Kim' });
+  store.put('automations/ER', {
+    name: 'Answer enquiries', trigger_type: 'email_received', trigger_config: { keywords: 'brochure' }, status: 'active', runs: {}, created_at: now(),
+    steps: [{ type: 'send_email', template_id: templateId(store, 'Monthly Newsletter'), reply_in_thread: true }],
+  });
+  receive({ from: 'Kim <kim@client.test>', subject: 'Brochure please', body: 'Can you send your brochure?' });
+  const other = receive({ from: 'kim@client.test', subject: 'Unrelated', body: 'hello' });
+  gas.tick();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].subject, 'Re: Brochure please');
+  assert.ok(sent[0].headers['in-reply-to']);
+  assert.notEqual(sent[0].threadId, other.threadId);
+});
+
+test('focus industries search several related phrases', () => {
+  const queries = [];
+  const web = (url, opts) => {
+    if (url === 'https://html.duckduckgo.com/html/') {
+      queries.push(opts.payload.q);
+      return { body: '' };
+    }
+    return null;
+  };
+  const { gas, store } = createGas({ web });
+  gas.setup();
+  store.put('leadSearches/S', { params: { countries: ['MY'], industries: ['Dental Lab'], sources: ['web'], pages: 2 }, status: 'queued', created_at: now() });
+  gas.tick();
+  assert.deepEqual(queries, [
+    '"dental laboratory" company Malaysia contact email',
+    '"dental lab" company Malaysia contact email',
+    '"dental technician" company Malaysia contact email',
+    '"crown and bridge lab" company Malaysia contact email',
+  ]);
+  assert.equal(store.doc('leadSearches/S').status, 'done');
+});

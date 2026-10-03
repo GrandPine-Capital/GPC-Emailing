@@ -495,5 +495,40 @@
     el.focus();
   }
 
+  // ------------------------------------------------------------------ template library
+  async function renderLibrary(root, filter) {
+    const lib = window.EmailTemplateLibrary || [];
+    const industries = [...new Set(lib.map((t) => t.industry))];
+    const active = filter ? decodeURIComponent(filter) : '';
+    const shown = lib.filter((t) => !active || t.industry === active);
+    root.innerHTML = `
+      ${App.pageHead({ title: 'Template library', back: { href: '#/templates', label: 'Templates' },
+        subtitle: 'Ready-made, professionally written emails for your industries. Use one, then edit the text, images and links.' })}
+      <div class="chips" style="max-height:none;margin-bottom:20px;border:0;padding:0;background:transparent">
+        <a class="chip ${active ? '' : 'on'}" href="#/templates/library">All (${lib.length})</a>
+        ${industries.map((i) => `<a class="chip ${active === i ? 'on' : ''}" href="#/templates/library/${encodeURIComponent(i)}">${esc(i)}</a>`).join('')}
+      </div>
+      <div class="tpl-grid">${shown.map((t) => `
+        <div class="tpl-card" data-key="${t.key}">
+          <div class="tpl-thumb"><iframe loading="lazy" sandbox="" data-key="${t.key}"></iframe></div>
+          <div class="meta"><div class="name">${esc(t.name)}</div>
+            <div style="margin-top:6px"><span class="badge blue">${esc(t.industry)}</span> <span class="badge">${esc(t.category)}</span></div>
+            <div class="muted" style="font-size:12.5px;margin-top:6px">${esc(t.subject)}</div></div>
+          <div class="acts"><button class="btn primary sm" data-use="${t.key}">Use this template</button></div>
+        </div>`).join('')}</div>`;
+    const htmlOf = (t) => (t.mode === 'html' ? t.html : R.renderDesign(t.design));
+    root.querySelectorAll('iframe[data-key]').forEach((f) => { f.srcdoc = sampleMerge(htmlOf(lib.find((t) => t.key === f.dataset.key))); });
+    root.querySelectorAll('[data-use]').forEach((b) => (b.onclick = async () => {
+      const t = lib.find((x) => x.key === b.dataset.use);
+      const saved = await api.post('/templates', {
+        name: t.name, category: t.category, subject: t.subject, mode: t.mode === 'html' ? 'html' : 'dragdrop',
+        design: t.design ? clone(t.design) : null, html: t.html || '',
+      });
+      toast('Template added - now make it yours');
+      location.hash = `#/templates/${saved.id}`;
+    }));
+  }
+  App.route(/^#\/templates\/library(?:\/(.+))?$/, renderLibrary);
+
   App.route(/^#\/templates\/(new-dragdrop|new-html|[\w-]+)$/, renderEditor);
 })();

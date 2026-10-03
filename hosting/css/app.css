@@ -270,6 +270,11 @@ table.data tr:hover td { background: #fafbff; }
 .chip { padding: 6px 12px; border: 1px solid var(--border-strong); border-radius: 999px; cursor: pointer; user-select: none; font-size: 13.5px; background: #fff; }
 .chip.on { background: var(--primary); border-color: var(--primary); color: #fff; }
 
+/* lead finder industry groups */
+.ind-group { margin-bottom: 12px; }
+.ind-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-size: 14px; }
+details.ind-group summary { cursor: pointer; margin-bottom: 8px; font-size: 14px; }
+
 /* ------------------------------------------------------------ automations */
 .recipes { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
 .recipe { border: 1px solid var(--border); border-radius: 14px; padding: 18px; background: #fff; cursor: pointer; text-align: left; font: inherit; color: inherit; display: flex; flex-direction: column; gap: 10px; transition: border-color .15s, box-shadow .15s; box-shadow: var(--shadow); }

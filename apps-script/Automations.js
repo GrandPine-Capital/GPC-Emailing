@@ -146,6 +146,11 @@ var Automations = (function () {
             extra.inReplyTo = Mailer.rfcMessageId(orig.gmail_id);
             if (!step.subject) subject = /^re:/i.test(orig.subject || '') ? orig.subject : 'Re: ' + (orig.subject || subject);
           }
+        } else if (step.reply_in_thread && trig.gmail_thread_id) {
+          // Reply to an incoming email that was not a reply to one of ours.
+          extra.threadId = trig.gmail_thread_id;
+          extra.inReplyTo = trig.rfc_message_id;
+          if (!step.subject) subject = 'Re: ' + String(trig.subject || subject).replace(/^\s*re\s*:\s*/i, '');
         }
         const m = Delivery.createMessage({ contact: contact, templateId: template.id, subject: subject, automationId: run.automation_id, runId: run.id, fromEmail: step.from_email });
         FS.commit([m.op]);

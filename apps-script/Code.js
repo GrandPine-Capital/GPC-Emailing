@@ -13,6 +13,7 @@ function resetCaches() {
   CONFIG.reset();
   Automations.reset();
   Mailer.reset();
+  AutoReply.reset();
 }
 
 function tick(maxMs) {

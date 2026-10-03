@@ -220,8 +220,9 @@ var Leads = (function () {
     return { company: company || host, website: origin, emails: list };
   }
 
-  function buildQuery(country, industry, keywords) {
-    return [industry && '"' + industry + '"', keywords, 'company', country && EmailCatalog.countryName(country), 'contact email'].filter(Boolean).join(' ');
+  /** Query for one search phrase, e.g. "dental laboratory" company Malaysia contact email. */
+  function buildQuery(country, phrase, keywords) {
+    return [phrase && '"' + phrase + '"', keywords, 'company', country && EmailCatalog.countryName(country), 'contact email'].filter(Boolean).join(' ');
   }
 
   function duckDuckGo(query, country, pages) {
@@ -269,11 +270,27 @@ var Leads = (function () {
     return links;
   }
 
+  /**
+   * Web search for one country + industry. Focus industries search several
+   * phrases (e.g. "dental laboratory", "dental technician"…) for wider coverage.
+   */
   function webSearch(country, industry, keywords, pages) {
     const sec = CONFIG.secrets();
-    const q = buildQuery(country, industry, keywords);
     const useGoogle = sec.google_cse_key && sec.google_cse_cx;
-    const links = useGoogle ? googleCse(q, country, pages) : duckDuckGo(q, country, pages);
+    const phrases = industry ? EmailCatalog.industryKeywords(industry).slice(0, 4) : [''];
+    const perPhrase = phrases.length > 1 ? 1 : pages;
+    let links = [];
+    const errors = [];
+    phrases.forEach(function (phrase, i) {
+      try {
+        const q = buildQuery(country, phrase, keywords);
+        links = links.concat(useGoogle ? googleCse(q, country, perPhrase) : duckDuckGo(q, country, perPhrase));
+      } catch (e) {
+        errors.push(e.message);
+      }
+      if (!useGoogle && i < phrases.length - 1) Utilities.sleep(800);
+    });
+    if (!links.length && errors.length) throw new Error(errors[0]);
     return uniqueSites(links).map(function (s) { s.source = useGoogle ? 'web:google' : 'web:duckduckgo'; return s; });
   }
 

@@ -34,7 +34,8 @@ var Delivery = (function () {
     });
     let body = EmailCore.merge(opts.html, vars, { html: true });
 
-    if (body.indexOf(unsubscribeUrl) < 0) {
+    // Transactional mail (auto-replies) has no marketing unsubscribe footer.
+    if (!opts.noUnsubscribe && body.indexOf(unsubscribeUrl) < 0) {
       const address = s.company_address ? EmailCore.escapeHtml(s.company_address) + '<br>' : '';
       const footer = '<div style="font:12px/1.5 Arial,sans-serif;color:#6b7280;text-align:center;padding:16px;">' + address +
         '<a href="' + unsubscribeUrl + '" style="color:#6b7280;">Unsubscribe</a></div>';
@@ -65,7 +66,7 @@ var Delivery = (function () {
     return {
       subject: EmailCore.merge(opts.subject, vars),
       html: body,
-      text: EmailCore.htmlToText(EmailCore.merge(opts.html, vars)) + '\n\nUnsubscribe: ' + unsubscribeUrl,
+      text: EmailCore.htmlToText(EmailCore.merge(opts.html, vars)) + (opts.noUnsubscribe ? '' : '\n\nUnsubscribe: ' + unsubscribeUrl),
       headers: headers,
       unsubscribeUrl: unsubscribeUrl,
     };

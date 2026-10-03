@@ -329,7 +329,7 @@ function validateAutomation(b) {
 
 const SECRET_KEYS = ['hunter_api_key', 'apollo_api_key', 'google_cse_key', 'google_cse_cx', 'chatdaddy_token', 'whatsapp_token'];
 const APP_TEXT_SETTINGS = ['from_name', 'reply_to', 'company_address', 'site_url', 'tracking_url', 'crawler_user_agent', 'default_from_email',
-  'default_country_code', 'whatsapp_provider', 'chatdaddy_account_id', 'whatsapp_phone_number_id', 'whatsapp_template_language'];
+  'default_country_code', 'timezone', 'whatsapp_provider', 'chatdaddy_account_id', 'whatsapp_phone_number_id', 'whatsapp_template_language'];
 const isAdminRole = (role) => role === 'owner' || role === 'admin';
 const randomHex = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, '0')).join('');
 const NUMERIC_SETTINGS = ['daily_limit', 'per_run_limit'];
@@ -343,7 +343,7 @@ on('GET', /^\/meta$/, async () => {
   const status = data(await getDoc(ref('settings/status'))) || {};
   const last = status.last_tick ? Date.parse(status.last_tick) : 0;
   return {
-    triggers: Catalog.TRIGGERS, stepTypes: Catalog.STEP_TYPES, countries: Catalog.COUNTRIES, industries: Catalog.INDUSTRIES,
+    triggers: Catalog.TRIGGERS, stepTypes: Catalog.STEP_TYPES, countries: Catalog.COUNTRIES, industries: Catalog.INDUSTRIES, focusIndustries: Catalog.FOCUS_INDUSTRIES,
     mergeTags: Catalog.MERGE_TAGS, stopConditions: Catalog.STOP_CONDITIONS, role: (await me()).role, dryRun: !!s.dry_run, workerConfigured: !!s.tracking_url,
     workerOnline: Date.now() - last < 15 * 60e3, lastTick: status.last_tick || null, account: status.account || '',
     remainingToday: status.remaining_today ?? null,
@@ -773,7 +773,8 @@ on('GET', /^\/settings$/, async () => {
     admin ? getDoc(ref('settings/secrets')) : Promise.resolve(null),
   ]);
   const sec = (secretsSnap && data(secretsSnap)) || {};
-  const out = { ...app, status: data(status) || {}, senders: (data(senders) || {}).list || [], senders_updated_at: (data(senders) || {}).updated_at || null, can_edit: admin };
+  const inbox = data(await getDoc(ref('settings/inbox'))) || {};
+  const out = { ...app, status: data(status) || {}, inbox: inbox.addresses || [], senders: (data(senders) || {}).list || [], senders_updated_at: (data(senders) || {}).updated_at || null, can_edit: admin };
   for (const k of SECRET_KEYS) out[k] = sec[k] || '';
   out.webhook_secret = sec.webhook_secret || '';
   const base = app.tracking_url || '';
@@ -819,6 +820,39 @@ on('POST', /^\/integrations\/test-whatsapp$/, async (_, b) => {
   await worker('test_whatsapp', { phone: b.phone, provider: b.provider });
   return { ok: true };
 });
+
+// auto-reply rules + inbox activity
+function autoreplyDoc(b) {
+  if (!b.template_id) throw httpError(400, 'Choose the email template to reply with');
+  const sch = b.schedule || {};
+  return {
+    name: String(b.name || 'Auto-reply').trim(), enabled: !!b.enabled, order: Number(b.order) || 0,
+    to_address: Core.emailKey(b.to_address || ''), audience: ['new', 'contacts'].includes(b.audience) ? b.audience : 'all',
+    keywords: String(b.keywords || '').trim(), exclude: String(b.exclude || '').trim(),
+    template_id: b.template_id, keep_thread: b.keep_thread !== false,
+    from_mode: ['default', 'custom'].includes(b.from_mode) ? b.from_mode : 'recipient', from_email: b.from_mode === 'custom' ? Core.emailKey(b.from_email) : '',
+    cooldown_hours: Math.max(1, Number(b.cooldown_hours) || 24),
+    schedule: { mode: ['outside', 'inside'].includes(sch.mode) ? sch.mode : 'always', days: (sch.days || [1, 2, 3, 4, 5]).map(Number), start: sch.start || '09:00', end: sch.end || '18:00' },
+    timezone: b.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kuala_Lumpur',
+    create_contact: !!b.create_contact, list_id: b.list_id || '', tags: Core.normaliseTags(b.tags).join(', '),
+    notify_email: Core.isEmail(b.notify_email) ? Core.emailKey(b.notify_email) : '', updated_at: nowIso(),
+  };
+}
+on('GET', /^\/autoreplies$/, async () => (await rows(col('autoreplies'))).sort((a, b) => (a.order || 0) - (b.order || 0) || String(a.created_at).localeCompare(String(b.created_at))));
+on('GET', /^\/autoreplies\/([\w-]+)$/, ([id]) => mustGet(`autoreplies/${id}`, 'Auto-reply'));
+on('POST', /^\/autoreplies$/, async (_, b) => {
+  const r = await addDoc(col('autoreplies'), { ...autoreplyDoc(b), replied_count: 0, created_at: nowIso() });
+  return { id: r.id };
+});
+on('PUT', /^\/autoreplies\/([\w-]+)$/, async ([id], b) => { await updateDoc(ref(`autoreplies/${id}`), autoreplyDoc(b)); return { id }; });
+on('POST', /^\/autoreplies\/([\w-]+)\/toggle$/, async ([id]) => {
+  const r = await mustGet(`autoreplies/${id}`, 'Auto-reply');
+  await updateDoc(ref(`autoreplies/${id}`), { enabled: !r.enabled });
+  if (!r.enabled) kick();
+  return { enabled: !r.enabled };
+});
+on('DELETE', /^\/autoreplies\/([\w-]+)$/, async ([id]) => { await deleteDoc(ref(`autoreplies/${id}`)); return { ok: true }; });
+on('GET', /^\/inbound$/, async (_, __, qp) => rows(query(col('inbound'), orderBy('received_at', 'desc'), limit(Math.min(Number(qp.limit) || 50, 200)))));
 
 // team (who can sign in)
 on('GET', /^\/team$/, async () => {

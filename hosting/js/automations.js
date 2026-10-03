@@ -100,6 +100,7 @@
       case 'email_opened': return `an email${camp} is opened`;
       case 'link_clicked': return `a link${c.url_contains ? ` containing "${short(c.url_contains, 24)}"` : ''}${camp} is clicked`;
       case 'reply_received': return `an email reply${c.keywords ? ` mentioning "${short(c.keywords, 36)}"` : ''} arrives`;
+      case 'email_received': return `any email${c.keywords ? ` mentioning "${short(c.keywords, 36)}"` : ''} arrives from a contact`;
       case 'bounced': return 'an email bounces';
       case 'unsubscribed': return 'a contact unsubscribes';
       case 'contact_added': return `a contact joins ${c.list_id ? `"${short(ctx.listName(c.list_id), 30)}"` : 'any list'}`;
@@ -222,6 +223,8 @@
         case 'email_opened': return `<div class="row">${campaign}${template}</div>`;
         case 'link_clicked': return `<div class="row">${campaign}${field('URL contains <span class="hint-inline">(optional)</span>', `<input type="text" data-cfg="url_contains" value="${esc(c.url_contains || '')}" placeholder="/pricing">`)}</div>`;
         case 'reply_received': return `<div class="row">${campaign}${field('Only if the reply mentions <span class="hint-inline">(optional)</span>', `<input type="text" data-cfg="keywords" value="${esc(c.keywords || '')}" placeholder="interested, price, call">`, 'Comma separated - any one matches.')}</div>`;
+        case 'email_received': return field('Only if the email mentions <span class="hint-inline">(optional)</span>', `<input type="text" data-cfg="keywords" value="${esc(c.keywords || '')}" placeholder="brochure, price">`,
+          'Fires for every new email from a known contact (including replies). To answer unknown senders automatically, use <a href="#/autoreply">Auto-reply</a>.');
         case 'whatsapp_received': return field('Only if the message mentions <span class="hint-inline">(optional)</span>', `<input type="text" data-cfg="keywords" value="${esc(c.keywords || '')}" placeholder="price, info">`, 'Needs the ChatDaddy webhook from Settings → Inbound webhooks.');
         case 'contact_added': return field('List', `<select data-cfg="list_id">${opts(lists, c.list_id, 'Any list')}</select>`);
         case 'tag_added': return field('Tag', `<input type="text" data-cfg="tag" list="tag-list" value="${esc(c.tag || '')}" placeholder="hot-lead">`);

@@ -53,12 +53,16 @@ async function main() {
     'https://acmerealty.test/contact': '<a href="mailto:sales@acmerealty.test">Sales</a> <p>info@acmerealty.test</p>',
   };
   const waCalls = [];
+  const ddgQueries = [];
   const web = (url, opts) => {
     if (url.startsWith('https://api.chatdaddy.tech/')) {
       waCalls.push({ url, body: opts.payload ? JSON.parse(opts.payload) : null });
       return { body: '{"ok":true}', headers: { 'Content-Type': 'application/json' } };
     }
-    if (url === 'https://html.duckduckgo.com/html/') return { body: `<a class="result__a" href="https://acmerealty.test/">Acme</a>` };
+    if (url === 'https://html.duckduckgo.com/html/') {
+      ddgQueries.push(opts.payload.q);
+      return { body: `<a class="result__a" href="https://acmerealty.test/">Acme</a>` };
+    }
     const k = url.replace(/\/+$/, '');
     return sites[k] !== undefined ? { body: sites[k] } : null;
   };
@@ -211,15 +215,26 @@ async function main() {
   step('lead finder by country + industry, then import');
   await page.goto(`${SITE}/#/leads`);
   await page.click('[data-chips="countries"] .chip:has-text("Malaysia")');
-  await page.click('[data-chips="industries"] .chip:has-text("Real Estate")');
+  await page.click('[data-allgroup="Dental"]');
+  await page.waitForSelector('#ic >> text=4 selected');
   await page.click('#go');
   await page.waitForSelector('td >> text=sales@acmerealty.test', { timeout: 90000 });
   await page.check('#all');
-  await page.fill('#newlist', 'MY real estate');
+  await page.fill('#newlist', 'MY dental');
   await page.click('#imp');
   await page.waitForSelector('text=imported');
   await shot('08-leads');
   assert.equal(getDoc('contacts/sales@acmerealty.test').country, 'Malaysia');
+  assert.ok(ddgQueries.includes('"dental laboratory" company Malaysia contact email'), 'focus industry searches related phrases');
+  assert.ok(ddgQueries.includes('"orthodontist" company Malaysia contact email'));
+
+  step('template library: use a ready-made industry template');
+  await page.goto(`${SITE}/#/templates/library/${encodeURIComponent('Dental Lab')}`);
+  await page.click('[data-use="dental-lab-outreach"]');
+  await waitFor(async () => /#\/templates\/[\w-]{10,}$/.test(await page.evaluate(() => location.hash)) && !(await page.evaluate(() => location.hash)).includes('library'), 'library template copied');
+  await page.waitForSelector('#t-name');
+  assert.equal(await page.inputValue('#t-name'), 'Dental Lab - Partnership introduction to clinics');
+  await shot('15-template-library-copy');
 
   step('settings: worker connection, sender identities, integrations, autosave');
   await page.goto(`${SITE}/#/settings`);
@@ -240,6 +255,12 @@ async function main() {
   await page.waitForSelector('text=Test WhatsApp message sent');
   assert.equal(waCalls.at(-1).url, 'https://api.chatdaddy.tech/im/messages/random/60123456789');
   await page.screenshot({ path: path.join(SHOTS, '09-settings.png'), fullPage: true });
+
+  await page.click('#connect-email');
+  await page.waitForSelector('.modal >> text=Send mail as');
+  await page.click('.modal [data-tab="other"]');
+  await page.waitForSelector('.modal >> text=SMTP server');
+  await page.click('.modal .foot [data-close]');
 
   step('team: invite a member, who can sign in but not change settings');
   await page.fill('#invite-email', 'member@example.com');
@@ -282,6 +303,27 @@ async function main() {
   await page.goto(`${SITE}/#/replies`);
   await page.waitForSelector('.reply-body >> text=Yes please call me');
   await page.waitForSelector('.badge:has-text("WhatsApp")');
+
+  step('auto-reply: quick start rule answers a new enquiry from the address it was sent to');
+  await page.goto(`${SITE}/#/autoreply`);
+  await page.click('[data-preset="thanks"]');
+  await waitFor(async () => /#\/autoreply\/[\w-]{10,}$/.test(await page.evaluate(() => location.hash)), 'auto-reply rule created');
+  await page.waitForSelector('select[name=template_id] option:checked:has-text("Auto-reply - Thanks for contacting us")', { state: 'attached' });
+  const rule = list('autoreplies')[0];
+  assert.equal(rule.enabled, true);
+  const before = G.sent.length;
+  const enquiry = G.receive({ from: 'Dr Tan <drtan@clinic.test>', to: 'sales@acme.test', subject: 'Crown pricing', body: 'Do you have a price list?' });
+  G.gas.tick();
+  const autoMail = G.sent.slice(before).find((m) => /drtan@clinic\.test/.test(m.to));
+  assert.ok(autoMail, 'auto-reply sent');
+  assert.equal(autoMail.subject, 'Re: Crown pricing');
+  assert.equal(autoMail.threadId, enquiry.threadId);
+  assert.match(autoMail.headers.from, /sales@acme\.test/);
+  assert.ok(getDoc('contacts/drtan@clinic.test').tags.includes('email-enquiry'));
+  await page.goto(`${SITE}/#/autoreply`);
+  await page.waitForSelector('td >> text=drtan@clinic.test');
+  await page.waitForSelector('.badge:has-text("Auto-replied")');
+  await shot('16-autoreply');
 
   step('mobile layout: hamburger drawer and bottom tabs');
   await page.setViewportSize({ width: 390, height: 844 });

@@ -103,6 +103,13 @@ function createGas({ web, firestoreEmulator, trustJwt } = {}) {
       newBlob: (data, mime, name) => ({ getBytes: () => toBytes(toBuf(data)), getDataAsString: () => toBuf(data).toString('utf8'), mime, name }),
       computeHmacSha256Signature: (value, key) => toBytes(crypto.createHmac('sha256', key).update(value).digest()),
       sleep() {},
+      formatDate: (date, tz, fmt) => {
+        const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+          .formatToParts(date).map((x) => [x.type, x.value]));
+        const day = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 }[p.weekday];
+        if (fmt !== 'u HH:mm') throw new Error('unsupported format ' + fmt);
+        return `${day} ${p.hour}:${p.minute}`;
+      },
     },
     ScriptApp: {
       getOAuthToken: () => 'oauth-token',
@@ -154,11 +161,17 @@ function createGas({ web, firestoreEmulator, trustJwt } = {}) {
   }
 
   /** Simulate an incoming email in the Gmail inbox. */
-  function receive({ threadId, from, subject, body, date = new Date() }) {
+  function receive({ threadId, from, subject, body, date = new Date(), to = OWNER, cc = '', headers = {} }) {
     const id = 'in' + crypto.randomBytes(4).toString('hex');
     const tid = threadId || 'th' + crypto.randomBytes(4).toString('hex');
-    const msg = { getId: () => id, getFrom: () => from, getSubject: () => subject, getPlainBody: () => body, getDate: () => date };
+    const hdrs = { 'Message-ID': `<${id}@sender.test>`, ...headers };
+    const lower = Object.fromEntries(Object.entries(hdrs).map(([k, v]) => [k.toLowerCase(), v]));
+    const msg = {
+      getId: () => id, getFrom: () => from, getSubject: () => subject, getPlainBody: () => body, getDate: () => date,
+      getTo: () => to, getCc: () => cc, getHeader: (name) => lower[String(name).toLowerCase()] || '',
+    };
     inbox.push({ getId: () => tid, getMessages: () => [msg] });
+    return { id, threadId: tid, rfcMessageId: hdrs['Message-ID'] };
   }
 
   return { gas: context, store, sent, triggers, inbox, receive, props, files, sendAs, OWNER, WEBAPP };

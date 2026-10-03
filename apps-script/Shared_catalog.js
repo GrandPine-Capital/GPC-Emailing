@@ -11,13 +11,52 @@
   // [ISO code, name, DuckDuckGo region]
   const COUNTRIES = [["MY","Malaysia","my-en"],["SG","Singapore","sg-en"],["ID","Indonesia","id-en"],["TH","Thailand","th-en"],["VN","Vietnam","vn-en"],["PH","Philippines","ph-en"],["CN","China","cn-zh"],["HK","Hong Kong","hk-tzh"],["TW","Taiwan","tw-tzh"],["JP","Japan","jp-jp"],["KR","South Korea","kr-kr"],["IN","India","in-en"],["PK","Pakistan","pk-en"],["BD","Bangladesh","wt-wt"],["LK","Sri Lanka","wt-wt"],["AU","Australia","au-en"],["NZ","New Zealand","nz-en"],["AE","United Arab Emirates","xa-en"],["SA","Saudi Arabia","xa-en"],["QA","Qatar","xa-en"],["TR","Turkey","tr-tr"],["IL","Israel","il-en"],["EG","Egypt","xa-en"],["ZA","South Africa","za-en"],["NG","Nigeria","wt-wt"],["KE","Kenya","wt-wt"],["GB","United Kingdom","uk-en"],["IE","Ireland","ie-en"],["DE","Germany","de-de"],["FR","France","fr-fr"],["ES","Spain","es-es"],["IT","Italy","it-it"],["NL","Netherlands","nl-nl"],["BE","Belgium","be-fr"],["CH","Switzerland","ch-de"],["AT","Austria","at-de"],["SE","Sweden","se-sv"],["NO","Norway","no-no"],["DK","Denmark","dk-da"],["FI","Finland","fi-fi"],["PL","Poland","pl-pl"],["PT","Portugal","pt-pt"],["GR","Greece","gr-gr"],["CZ","Czech Republic","cz-cs"],["RO","Romania","ro-ro"],["HU","Hungary","hu-hu"],["US","United States","us-en"],["CA","Canada","ca-en"],["MX","Mexico","mx-es"],["BR","Brazil","br-pt"],["AR","Argentina","ar-es"],["CL","Chile","cl-es"],["CO","Colombia","co-es"],["PE","Peru","pe-es"]].map(function (c) { return { code: c[0], name: c[1], region: c[2] }; });
 
-  const INDUSTRIES = ["Accounting","Advertising & Marketing","Agriculture","Architecture","Automotive","Banking & Finance","Construction","Consulting","E-commerce","Education & Training","Energy & Utilities","Engineering","Food & Beverage","Healthcare & Medical","Hospitality & Hotels","Human Resources & Recruitment","Information Technology","Insurance","Investment & Asset Management","Legal Services","Logistics & Shipping","Manufacturing","Media & Publishing","Non-profit","Oil & Gas","Pharmaceuticals","Real Estate","Retail","Software & SaaS","Telecommunications","Travel & Tourism","Wholesale & Distribution"];
+  /*
+   * Focus industries: each has related sub-sectors and the search phrases the
+   * Lead Finder uses (several searches per industry find far more companies
+   * than one generic query).
+   */
+  const FOCUS_INDUSTRIES = [
+    { group: 'Education', name: 'Education', keywords: ['education centre', 'private school', 'learning centre', 'training academy'] },
+    { group: 'Education', name: 'Tuition & Learning Centres', keywords: ['tuition centre', 'enrichment centre', 'learning centre for kids'] },
+    { group: 'Education', name: 'Online Courses & E-learning', keywords: ['online course provider', 'e-learning company', 'online academy'] },
+    { group: 'Education', name: 'Professional Training Providers', keywords: ['professional training provider', 'HRDF training provider', 'corporate training company'] },
+    { group: 'Education', name: 'Early Childhood Education', keywords: ['kindergarten', 'preschool', 'childcare centre'] },
+    { group: 'Education', name: 'Language Schools', keywords: ['language school', 'English language centre', 'Mandarin learning centre'] },
+    { group: 'Investment', name: 'Investment Education', keywords: ['investment education', 'stock market course', 'trading academy', 'financial literacy course'] },
+    { group: 'Investment', name: 'Investment Tools', keywords: ['investment tools', 'stock screener', 'trading software', 'investment platform'] },
+    { group: 'Investment', name: 'Trading & Stock Market Courses', keywords: ['stock trading course', 'forex trading course', 'technical analysis course'] },
+    { group: 'Investment', name: 'Financial Planning & Wealth Management', keywords: ['financial planner', 'wealth management firm', 'licensed financial adviser'] },
+    { group: 'Investment', name: 'Fintech', keywords: ['fintech company', 'robo advisor', 'digital investment platform'] },
+    { group: 'Dental', name: 'Dental Lab', keywords: ['dental laboratory', 'dental lab', 'dental technician', 'crown and bridge lab'] },
+    { group: 'Dental', name: 'Dental Clinics', keywords: ['dental clinic', 'dentist', 'dental surgery'] },
+    { group: 'Dental', name: 'Orthodontics & Aligners', keywords: ['orthodontist', 'clear aligner provider', 'braces clinic'] },
+    { group: 'Dental', name: 'Dental Supplies & Equipment', keywords: ['dental supplies', 'dental equipment supplier', 'dental materials distributor'] },
+    { group: 'Soul, mind & numerology', name: 'Numerology Education', keywords: ['numerology course', 'numerology academy', 'numerology consultant'] },
+    { group: 'Soul, mind & numerology', name: 'Metaphysics & Feng Shui', keywords: ['feng shui consultant', 'bazi course', 'metaphysics academy'] },
+    { group: 'Soul, mind & numerology', name: 'Soul & Mind Education', keywords: ['mindfulness course', 'meditation centre', 'spiritual wellness academy', 'soul healing workshop'] },
+    { group: 'Soul, mind & numerology', name: 'Holistic Wellness & Healing', keywords: ['holistic wellness centre', 'energy healing course', 'reiki training'] },
+    { group: 'Personal & talent development', name: 'Personal Development Education', keywords: ['personal development course', 'self improvement workshop', 'life coaching academy'] },
+    { group: 'Personal & talent development', name: 'Life & Executive Coaching', keywords: ['life coach', 'executive coaching', 'NLP training'] },
+    { group: 'Personal & talent development', name: 'Human Development & Talent Management', keywords: ['talent management', 'human capital development', 'talent development consultancy', 'HR consulting'] },
+    { group: 'Personal & talent development', name: 'Leadership & Corporate Training', keywords: ['leadership training', 'corporate training provider', 'soft skills training'] },
+    { group: 'Personal & talent development', name: 'Psychology & Counselling', keywords: ['counselling centre', 'psychologist practice', 'psychometric assessment'] },
+  ];
+
+  const INDUSTRIES = FOCUS_INDUSTRIES.map(function (i) { return i.name; }).concat(["Accounting","Advertising & Marketing","Agriculture","Architecture","Automotive","Banking & Finance","Construction","Consulting","E-commerce","Education & Training","Energy & Utilities","Engineering","Food & Beverage","Healthcare & Medical","Hospitality & Hotels","Human Resources & Recruitment","Information Technology","Insurance","Investment & Asset Management","Legal Services","Logistics & Shipping","Manufacturing","Media & Publishing","Non-profit","Oil & Gas","Pharmaceuticals","Real Estate","Retail","Software & SaaS","Telecommunications","Travel & Tourism","Wholesale & Distribution"].filter(function (n, i, all) { return all.indexOf(n) === i; }));
+
+  /** Search phrases for an industry (focus industries have several). */
+  function industryKeywords(name) {
+    for (let i = 0; i < FOCUS_INDUSTRIES.length; i++) if (FOCUS_INDUSTRIES[i].name === name) return FOCUS_INDUSTRIES[i].keywords.slice();
+    return name ? [name] : [];
+  }
 
   // Automation triggers. `group` and `icon` drive the dashboard's builder.
   const TRIGGERS = {
     email_sent: { label: 'Email sent', group: 'Email', icon: 'send', description: 'Right after an email (campaign or automation) is sent to the contact' },
     email_opened: { label: 'Email opened', group: 'Email', icon: 'mail-open', description: 'When the contact opens one of your emails' },
     link_clicked: { label: 'Link clicked', group: 'Email', icon: 'pointer', description: 'When the contact clicks a link (optionally a specific URL)' },
+    email_received: { label: 'Any email received', group: 'Email', icon: 'mail-open', description: 'When any email arrives in your connected inbox from a known contact (optionally containing keywords)' },
     reply_received: { label: 'Email reply received', group: 'Email', icon: 'reply', description: 'When the contact replies by email (optionally containing keywords)' },
     bounced: { label: 'Email bounced', group: 'Email', icon: 'alert', description: 'When an email to the contact bounces' },
     unsubscribed: { label: 'Contact unsubscribed', group: 'Email', icon: 'user-x', description: 'When the contact unsubscribes from your emails' },
@@ -66,5 +105,5 @@
     return c ? c.name : v;
   }
 
-  return { COUNTRIES: COUNTRIES, INDUSTRIES: INDUSTRIES, TRIGGERS: TRIGGERS, STEP_TYPES: STEP_TYPES, STOP_CONDITIONS: STOP_CONDITIONS, MERGE_TAGS: MERGE_TAGS, byCode: byCode, countryName: countryName };
+  return { COUNTRIES: COUNTRIES, INDUSTRIES: INDUSTRIES, FOCUS_INDUSTRIES: FOCUS_INDUSTRIES, industryKeywords: industryKeywords, TRIGGERS: TRIGGERS, STEP_TYPES: STEP_TYPES, STOP_CONDITIONS: STOP_CONDITIONS, MERGE_TAGS: MERGE_TAGS, byCode: byCode, countryName: countryName };
 });

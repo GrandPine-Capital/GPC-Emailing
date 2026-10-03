@@ -5,15 +5,16 @@ A complete email marketing system that runs entirely on Google's free tiers. It 
 | Feature | Details |
 |---|---|
 | **Email builder** | A drag-and-drop block editor with headings, text, images uploaded to Google Drive, buttons, 2 columns, dividers, spacers, social links, footer and custom HTML. Text can be edited inline, with desktop and mobile preview. There is also an **HTML code editor** with live preview, snippets and `.html` import. |
-| **Standard templates** | Newsletter, Promotion, Welcome, Event invitation, Personal follow-up and Reply auto-response. |
+| **Template library** | 15 ready-made templates for your industries: education enrolment and trial class, investing webinar, investment-tool trial, market newsletter, dental-lab outreach to clinics, dental check-up, numerology workshop, soul & mind programme, personal development launch, corporate talent-development proposal, plain B2B intro, and 3 auto-reply templates. Plus the original standard templates. One click copies a template into your editor. |
 | **Contacts & lists** | CSV import with automatic column detection and merge on duplicates, tags, country and industry, filters, bulk actions, CSV export. |
-| **Lead Finder** | Search online by **country** (54) and **industry** (32, plus custom). Sources: web search (DuckDuckGo, or Google Programmable Search) followed by a polite, robots.txt-aware crawl of company websites. Optional **Hunter.io** and **Apollo.io** portals, or crawl a list of websites you supply. You review results and import them into a list. |
+| **Lead Finder** | Search online by **country** (54) and **industry**. Built-in **focus industries**: Education (tuition, e-learning, training providers, early childhood, languages), **Investment Education**, **Investment Tools**, trading courses, wealth management, fintech, **Dental Lab**, **Dental clinics**, orthodontics, dental supplies, **Numerology Education**, metaphysics & feng shui, **Soul & Mind Education**, holistic wellness, **Personal Development Education**, coaching, **Human Development & Talent Management**, leadership & corporate training, psychology & counselling. Each focus industry searches several related phrases (e.g. "dental laboratory", "dental technician", "crown and bridge lab"). Sources: web search plus a polite website crawl, **Hunter.io**, **Apollo.io**, or your own URLs. |
 | **Campaigns** | Personalisation (`{{first_name\|there}}`, `{{company}}`…), test sends, send now or schedule, daily and per-batch limits, pause and resume. |
 | **Tracking** | Opens, clicks (with a top-links report), replies, one-click unsubscribe (`List-Unsubscribe` + RFC 8058) and bounces. |
 | **Reply detection** | Reads your **Gmail inbox** directly and matches each reply to the email it answers by Gmail thread. No IMAP setup needed. |
 | **Automations** | Start from **10 ready-made recipes**, then build visually: a step-by-step flow that reads as a sentence ("When a reply mentions pricing → add tag → WhatsApp my sales team"). **Triggers:** email sent, opened, link clicked, reply received (with keywords), bounced, unsubscribed, added to list, tag added, **WhatsApp message received** (ChatDaddy), **webhook received** (forms, Zapier, CRM), manual. **Steps:** send email (any sender address, optionally threaded), **send WhatsApp** (ChatDaddy or WhatsApp Cloud API), **sync contact to ChatDaddy** with tags, wait, stop if replied / opened / clicked / has tag, add or remove tags and lists, update a field, notify your team by email and/or WhatsApp, call a webhook. |
 | **Team & access** | Invite users as **Admin** (also manages settings and the team) or **Member** (day-to-day work). They sign in with Google, or with an emailed sign-in link if their address isn't a Google account. Firestore rules enforce the roles. |
-| **Sender identities** | Send from any verified Gmail **"Send mail as"** address. Pick a default, or choose per campaign and per automation email. |
+| **Sending addresses** | Send from any connected address: Gmail/Workspace aliases or your own domain (e.g. info@yourcompany.com via its SMTP) through Gmail's *Send mail as*. A step-by-step **Connect an email address** guide is built in. Choose the address per campaign, per automation email or per auto-reply. |
+| **Auto-reply** | Rules that answer incoming email to your connected addresses: any address or a specific one; everyone, new senders or contacts; optional keywords; always, or only in or outside office hours. Replies come from the address they wrote to, in the same thread, at most once per sender per N hours. Optionally save the sender as a contact (list + tags) and notify your team. Never answers newsletters, no-reply senders, other auto-responders or yourself. An activity log shows what happened to each incoming email. |
 | **Mobile** | Fully responsive, with a hamburger menu, bottom tab bar and phone-sized forms and dialogs. |
 
 ## Architecture (all free)
@@ -123,6 +124,15 @@ To add more dashboard users, run `addAdmin("colleague@example.com")` in the Apps
 - Set the **default country code** (for example `60`), so local numbers like `012-345 6789` become `60123456789`.
 
 ChatDaddy and Meta bill their own usage. Everything else in this portal stays on Google's free tiers.
+
+### Connecting other email addresses (sending + auto-reply)
+
+All email runs through the worker's Gmail account. Click **Settings → Sender identities → Connect an email address** for the guide. In short:
+1. **Send:** add the address in Gmail → Settings → Accounts → *Send mail as*. Use your provider's SMTP for non-Google domains.
+2. **Receive:** forward incoming mail from that address to the worker's Gmail.
+3. Click **Refresh from Gmail**.
+
+The address can then be used as a sender, and **Auto-reply** rules answer email sent to it.
 
 ### Upgrading an existing installation
 

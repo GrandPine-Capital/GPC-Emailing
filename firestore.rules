@@ -36,6 +36,8 @@ service cloud.firestore {
     match /runs/{id} { allow read, write: if isMember(); }
     match /replies/{id} { allow read, write: if isMember(); }
     match /whatsapp/{id} { allow read: if isMember(); }
+    match /autoreplies/{id} { allow read, write: if isMember(); }
+    match /inbound/{id} { allow read: if isMember(); }
     match /jobs/{id} { allow read, create: if isMember(); }
     match /stats/{id} { allow read: if isMember(); }
     match /meta/{id} { allow read, write: if isMember(); }
