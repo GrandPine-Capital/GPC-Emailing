@@ -9,8 +9,8 @@
     "test:e2e": "node test/e2e/run.js",
     "emulators": "npx -y firebase-tools@latest emulators:start --only auth,firestore,hosting",
     "deploy:firebase": "npx -y firebase-tools@latest deploy --only hosting,firestore",
-    "deploy:script": "cd apps-script && npx -y @google/clasp@latest push -f",
-    "deploy": "npm run sync && npm run deploy:firebase && npm run deploy:script"
+    "deploy": "npm run sync && npm run deploy:firebase && npm run deploy:worker",
+    "deploy:worker": "node scripts/sync-shared.js && node scripts/redeploy-worker.js"
   },
   "engines": {
     "node": ">=20"

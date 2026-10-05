@@ -138,10 +138,23 @@ The address can then be used as a sender, and **Auto-reply** rules answer email 
 
 ```bash
 cd ~/Emailing && git pull
-npx -y firebase-tools@latest deploy --only hosting,firestore --project emailing-portal
-cd apps-script && npx -y @google/clasp@latest push -f
-npx -y @google/clasp@latest redeploy YOUR_DEPLOYMENT_ID -d "v3"
+npm run deploy        # Hosting + Firestore rules, then push and redeploy the Apps Script worker
 ```
+
+`npm run deploy:worker` does only the Apps Script part:
+1. It pushes the code.
+2. It finds your web-app deployment by itself, so you never need to copy a deployment ID.
+3. It updates that deployment in place, so the `/exec` URL stays the same.
+
+<details><summary>Doing it by hand instead</summary>
+
+```bash
+cd ~/Emailing/apps-script
+npx -y @google/clasp@latest push -f
+npx -y @google/clasp@latest deployments       # copy the ID on the line ending in "@<number>", NOT "@HEAD"
+npx -y @google/clasp@latest redeploy AKfy...the-copied-ID... -d "update"
+```
+</details>
 
 Then run **`setup()`** once more in the Apps Script editor. It's safe to re-run, and it:
 - marks you as the owner;
@@ -152,12 +165,12 @@ Then run **`setup()`** once more in the Apps Script editor. It's safe to re-run,
 
 ```bash
 git pull
-npm run deploy        # sync shared code, deploy Hosting + rules, push Apps Script
+npm run deploy        # sync shared code, deploy Hosting + rules, push and redeploy the worker
 ```
 
-If you change `doGet`/`doPost`, also update the web app version: **Deploy → Manage deployments → ✎ → Version: New version**.
-
 ### Troubleshooting
+
+- **"Invalid deployment ID"** from `clasp redeploy`: the deployment ID was wrong or a placeholder. Run `npm run deploy:worker`, which finds the ID for you.
 
 - **"Cloud Firestore API has not been used in project …" or 403 errors in the Apps Script log.**
   1. In Firebase Project settings, copy the **project number**.
