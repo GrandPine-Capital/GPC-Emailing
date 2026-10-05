@@ -34,11 +34,32 @@ function pickDeployments(list) {
   return list.filter((d) => d.deploymentId && d.versionNumber).sort((a, b) => b.versionNumber - a.versionNumber);
 }
 
+/** Writes the commit into Build.js so the worker knows to run upgrade() once. Returns a restore function. */
+function stampBuild() {
+  const file = path.join(DIR, 'Build.js');
+  const original = fs.readFileSync(file, 'utf8');
+  let id = process.env.GITHUB_SHA || '';
+  if (!id) {
+    try {
+      id = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: DIR, encoding: 'utf8' }).trim();
+    } catch (e) {
+      id = 'local';
+    }
+  }
+  id = id.slice(0, 12) + '-' + Date.now().toString(36);
+  fs.writeFileSync(file, original.replace(/var BUILD_ID = .*;/, `var BUILD_ID = '${id}';`));
+  return () => fs.writeFileSync(file, original);
+}
+
 function main() {
   const args = process.argv.slice(2);
   const idArg = args.includes('--id') ? args[args.indexOf('--id') + 1] : process.env.DEPLOYMENT_ID;
   const description = `Updated ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`;
 
+  // CI: build .clasp.json from the script ID secret.
+  if (process.env.CLASP_SCRIPT_ID && !fs.existsSync(path.join(DIR, '.clasp.json'))) {
+    fs.writeFileSync(path.join(DIR, '.clasp.json'), JSON.stringify({ scriptId: process.env.CLASP_SCRIPT_ID.trim(), rootDir: '.' }));
+  }
   if (!fs.existsSync(path.join(DIR, '.clasp.json'))) {
     console.error('apps-script/.clasp.json not found. Run the one-time "clasp create" step from the README first.');
     process.exit(1);
@@ -46,7 +67,12 @@ function main() {
 
   if (!args.includes('--no-push')) {
     console.log('→ Pushing worker code to Apps Script…');
-    clasp(['push', '-f']);
+    const restore = stampBuild();
+    try {
+      clasp(['push', '-f']);
+    } finally {
+      restore();
+    }
   }
 
   let id = idArg;
@@ -84,4 +110,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { parseDeployments, pickDeployments };
+module.exports = { parseDeployments, pickDeployments, stampBuild };

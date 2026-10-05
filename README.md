@@ -134,7 +134,32 @@ All email runs through the worker's Gmail account. Click **Settings → Sender i
 
 The address can then be used as a sender, and **Auto-reply** rules answer email sent to it.
 
-### Upgrading an existing installation
+### Automatic deployment (set up once, then hands-off)
+
+After this, every push to GitHub on `main` or a `claude/...` branch deploys the whole system automatically through GitHub Actions (free):
+- runs the tests;
+- deploys Hosting and the Firestore rules and indexes;
+- pushes and redeploys the Apps Script worker.
+
+The worker then upgrades itself on its next 5-minute run, so you don't need to re-run `setup()`.
+
+One-time setup, in Cloud Shell, after you have done the **Deploy** steps above once:
+
+```bash
+cd ~/Emailing && git pull
+bash scripts/setup-auto-deploy.sh
+```
+
+The script:
+1. Creates a `github-deployer` service account in `emailing-portal`.
+2. Signs you in to GitHub. Open the link it prints and enter the code.
+3. Saves three repository secrets: `FIREBASE_SERVICE_ACCOUNT`, `CLASPRC_JSON` and `CLASP_SCRIPT_ID`.
+
+You can follow each run under your GitHub repository → **Actions**. To deploy without a code change, open **Actions → Deploy → Run workflow**.
+
+If a run's worker step fails with an authentication error, your clasp login has expired. Run `npx -y @google/clasp@latest login --no-localhost` in Cloud Shell, then run `bash scripts/setup-auto-deploy.sh` again.
+
+### Upgrading an existing installation (manual)
 
 ```bash
 cd ~/Emailing && git pull
@@ -156,10 +181,7 @@ npx -y @google/clasp@latest redeploy AKfy...the-copied-ID... -d "update"
 ```
 </details>
 
-Then run **`setup()`** once more in the Apps Script editor. It's safe to re-run, and it:
-- marks you as the owner;
-- creates the webhook secret;
-- loads your Gmail sender identities.
+The worker upgrades itself on its next 5-minute run: it marks you as the owner, creates the webhook secret and loads your Gmail sender identities. You can also run **`setup()`** in the Apps Script editor to do it straight away; it's safe to re-run.
 
 ### Updating later
 
@@ -220,12 +242,15 @@ hosting/                          Firebase Hosting site
   js/firebase.js, js/main.js      Firebase init (config from /__/firebase/init.json), Google sign-in
   r.html, u.html, js/public.js    public click-redirect and unsubscribe pages
 apps-script/                      Google Apps Script worker (deploy with clasp)
-  Code.js                         setup(), tick(), doGet/doPost, jobs
+  Code.js                         setup(), upgrade(), tick(), doGet/doPost, jobs
+  Build.js                        build ID stamped on each deploy (triggers the automatic upgrade)
   Firestore.js                    Firestore REST client
   Mailer.js, Delivery.js          Gmail sending (raw MIME), personalisation and tracking
   Campaigns.js, Automations.js    queueing and the automation engine
   Replies.js, Tracking.js         Gmail reply/bounce/unsubscribe detection, opens and clicks
   Leads.js                        lead finder (search, crawler, Hunter, Apollo)
+.github/workflows/deploy.yml      test + deploy everything on every push
+scripts/                          sync-shared.js, redeploy-worker.js, setup-auto-deploy.sh
 shared/                           code shared by browser + Apps Script (copied by `npm run sync`)
 test/                             unit tests, Apps Script worker tests, full-stack e2e test
 ```

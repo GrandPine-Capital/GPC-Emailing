@@ -39,6 +39,30 @@ test('setup() creates admin, settings, standard templates, example automations a
   assert.equal(triggers.length, 1);
 });
 
+test('tick() runs upgrade() once after a new build is deployed, without re-running setup()', () => {
+  const { gas, store, props, triggers, OWNER } = createGas();
+  gas.setup();
+  store.put(`admins/${OWNER}`, { email: OWNER }); // old install: no role yet
+  gas.tick();
+  assert.equal(store.doc(`admins/${OWNER}`).role, undefined, 'same build: no upgrade');
+
+  vmSet(gas, 'BUILD_ID', 'abc123');
+  gas.tick();
+  assert.equal(store.doc(`admins/${OWNER}`).role, 'owner');
+  assert.equal(props.get('build_id'), 'abc123');
+  assert.equal(store.doc('settings/status').build_id, 'abc123');
+  assert.equal(store.collection('templates').length, 6);
+  assert.equal(triggers.length, 1);
+
+  store.put(`admins/${OWNER}`, { email: OWNER });
+  gas.tick();
+  assert.equal(store.doc(`admins/${OWNER}`).role, undefined, 'upgrade runs only once per build');
+});
+
+function vmSet(gas, name, value) {
+  require('node:vm').runInContext(`${name} = ${JSON.stringify(value)}`, gas);
+}
+
 test('end-to-end: campaign send, open, click, reply, follow-up and unsubscribe', () => {
   const { gas, store, sent, receive } = createGas();
   gas.setup();

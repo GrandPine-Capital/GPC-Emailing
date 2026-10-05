@@ -1,0 +1,64 @@
+# Tests and deploys everything on every push - no Cloud Shell needed.
+# One-time setup: run `bash scripts/setup-auto-deploy.sh` in Cloud Shell (see README → Automatic deployment).
+name: Deploy
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      CLASP_SCRIPT_ID: ${{ secrets.CLASP_SCRIPT_ID }}
+      FIREBASE_PROJECT: emailing-portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Sync shared code
+        run: node scripts/sync-shared.js
+
+      - name: Check deploy secrets
+        run: |
+          missing=""
+          [ -n "$FIREBASE_SERVICE_ACCOUNT" ] || missing="$missing FIREBASE_SERVICE_ACCOUNT"
+          [ -n "$CLASPRC_JSON" ] || missing="$missing CLASPRC_JSON"
+          [ -n "$CLASP_SCRIPT_ID" ] || missing="$missing CLASP_SCRIPT_ID"
+          if [ -n "$missing" ]; then
+            echo "::warning::Missing secrets:$missing. Run 'bash scripts/setup-auto-deploy.sh' once in Cloud Shell."
+          fi
+
+      - name: Deploy Firebase Hosting + Firestore rules/indexes
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: |
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          npx -y firebase-tools@latest deploy --only hosting,firestore --project "$FIREBASE_PROJECT" --non-interactive
+          rm -f "$RUNNER_TEMP/sa.json"
+
+      - name: Push and redeploy the Apps Script worker
+        if: env.CLASPRC_JSON != '' && env.CLASP_SCRIPT_ID != ''
+        run: |
+          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
+          node scripts/redeploy-worker.js
+          rm -f ~/.clasprc.json

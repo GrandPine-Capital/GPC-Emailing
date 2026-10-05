@@ -23,6 +23,7 @@ function tick(maxMs) {
   const summary = {};
   try {
     resetCaches();
+    autoUpgrade();
     const step = function (name, fn) {
       if (!hasTime()) return;
       try {
@@ -226,7 +227,11 @@ function upload(body) {
  * Run once after deploying the web app (Deploy > New deployment > Web app,
  * Execute as: Me, Who has access: Anyone). Safe to re-run.
  */
-function setup() {
+/**
+ * Idempotent part of setup(): owner role, default settings, webhook secret,
+ * sender identities and seed content. Safe to run any number of times.
+ */
+function upgrade() {
   const owner = String(CONFIG.senderEmail()).toLowerCase();
   const existing = FS.get('admins/' + owner);
   if (!existing) FS.set('admins/' + owner, { email: owner, role: 'owner', name: '', created_at: nowIso() });
@@ -238,10 +243,15 @@ function setup() {
   Object.keys(defaults).forEach(function (k) {
     if (current[k] === undefined) patch[k] = defaults[k];
   });
-  let webAppUrl = ScriptApp.getService().getUrl() || '';
+  let webAppUrl = '';
+  try {
+    webAppUrl = ScriptApp.getService().getUrl() || '';
+  } catch (e) {
+    console.warn('Could not read the web app URL: ' + e.message);
+  }
   // Only the public deployment URL (…/exec) works for recipients; /dev requires sign-in.
   if (!/\/exec$/.test(webAppUrl)) webAppUrl = '';
-  if (webAppUrl) patch.tracking_url = webAppUrl;
+  if (webAppUrl && webAppUrl !== current.tracking_url) patch.tracking_url = webAppUrl;
   if (Object.keys(patch).length) FS.set('settings/app', patch, { merge: true });
   if (!FS.get('settings/secrets')) FS.set('settings/secrets', { hunter_api_key: '', apollo_api_key: '', google_cse_key: '', google_cse_cx: '' });
   if (!(FS.get('settings/secrets') || {}).webhook_secret) FS.set('settings/secrets', { webhook_secret: newToken() + newToken() }, { merge: true });
@@ -254,6 +264,28 @@ function setup() {
   CONFIG.reset();
 
   const seeded = seedContent();
+  PropertiesService.getScriptProperties().setProperty('build_id', BUILD_ID);
+  FS.set('settings/status', { build_id: BUILD_ID, upgraded_at: nowIso() }, { merge: true });
+  return { owner: owner, webAppUrl: webAppUrl || current.tracking_url || '', seeded: seeded };
+}
+
+/** Runs upgrade() once after each automatic deployment (new BUILD_ID), so nobody has to re-run setup(). */
+function autoUpgrade() {
+  if (PropertiesService.getScriptProperties().getProperty('build_id') === BUILD_ID) return false;
+  try {
+    upgrade();
+    console.log('Upgraded worker to build ' + BUILD_ID);
+  } catch (e) {
+    console.error('Automatic upgrade failed', e);
+  }
+  return true;
+}
+
+function setup() {
+  const r = upgrade();
+  const owner = r.owner;
+  const webAppUrl = r.webAppUrl;
+  const seeded = r.seeded;
 
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'tick') ScriptApp.deleteTrigger(t);
@@ -261,7 +293,7 @@ function setup() {
   ScriptApp.newTrigger('tick').timeBased().everyMinutes(5).create();
   CONFIG.secret();
 
-  const msg = 'Setup complete.\nAdmin: ' + owner + '\nWeb app URL: ' + (webAppUrl || current.tracking_url || '(not detected - deploy the web app, then paste its …/exec URL into dashboard Settings or run setup() again)') +
+  const msg = 'Setup complete.\nAdmin: ' + owner + '\nWeb app URL: ' + (webAppUrl || '(not detected - deploy the web app, then paste its …/exec URL into dashboard Settings or run setup() again)') +
     '\nSeeded: ' + seeded.templates + ' templates, ' + seeded.automations + ' automations\nWorker trigger: every 5 minutes';
   console.log(msg);
   return msg;
