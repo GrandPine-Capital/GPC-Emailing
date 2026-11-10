@@ -4,34 +4,48 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#ffffff">
-  <title>GPC Emailing</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%232563eb'/><path d='M20 32h60v38H20z' fill='none' stroke='white' stroke-width='7' stroke-linejoin='round'/><path d='m22 35 28 19 28-19' fill='none' stroke='white' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+  <title>GrandPine Capital Emailing</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✉️</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
-  <!-- Sign-in -->
-  <div id="signin" class="signin">
-    <div class="signin-card">
-      <div class="logo-tile" data-icon="mail" data-size="22"></div>
-      <div class="brand-lg">GPC Emailing</div>
-      <p class="muted" id="signin-msg">Loading…</p>
-      <button class="btn primary block lg" id="sso-signin" style="display:none">Sign in with GrandPine</button>
-      <form id="dev-signin" style="display:none;margin-top:16px;text-align:left">
-        <p class="hint">Local development: a token like <code>dev:alex:admin</code> (admin, editor or viewer).</p>
-        <div class="field"><input type="text" id="dev-token" value="dev:dev:admin" autocomplete="off" required></div>
-        <button class="btn block" type="submit">Sign in (dev)</button>
-      </form>
+  <!-- Staff sign-in: the GrandPine staff sign-in page, as in the Helpdesk, Marketing and the CRM -->
+  <main id="signin" class="sso-wrap">
+    <div class="sso-inner">
+      <div class="sso-brand">
+        <h1><img src="/assets/grandpine-logo.svg" alt="GrandPine Capital"></h1>
+        <div class="sso-app">Emailing</div>
+      </div>
+      <div class="sso-card">
+        <div role="alert" class="sso-alert" id="sso-noaccess" style="display:none">
+          You are signed in, but your GrandPine account has no access to Emailing. Ask an IAM administrator to grant you an
+          Emailing role in the Workspace, then sign in again.
+        </div>
+        <a class="sso-btn" id="sso-workspace" href="https://workspace.grandpine.com" style="display:none">Workspace</a>
+        <p class="sso-status" id="sso-status" style="display:none">Taking you to GrandPine SSO…</p>
+        <button class="sso-btn" id="sso-signin" type="button"><span class="sso-spinner" id="sso-spinner" aria-hidden="true" style="display:none"></span><span data-icon="key" data-size="18"></span>Sign in with GrandPine SSO</button>
+        <div role="alert" class="sso-error" id="sso-error" style="display:none"></div>
+        <form id="dev-signin" style="display:none;margin-top:16px">
+          <p class="hint">Local development: a token like <code>dev:alex:admin</code> (admin, editor or viewer).</p>
+          <div class="field"><input type="text" id="dev-token" value="dev:dev:admin" autocomplete="off" required></div>
+          <button class="sso-btn" type="submit">Sign in (dev)</button>
+        </form>
+        <div class="sso-note">
+          <div><span data-icon="info" data-size="20"></span>
+            <span>One GrandPine account for every staff tool. Accounts and access are managed by an IAM administrator at workspace.grandpine.com.</span></div>
+        </div>
+      </div>
     </div>
-  </div>
+  </main>
 
   <div class="layout" id="layout" style="display:none">
     <aside class="sidebar" id="sidebar" aria-label="Main navigation">
       <div class="brand">
-        <div class="logo-tile" data-icon="mail" data-size="22"></div>
-        <div><div class="brand-name">Emailing</div><div class="brand-sub">WORKSPACE</div></div>
+        <img class="brand-logo" src="/assets/grandpine-logo.svg" alt="GrandPine Capital">
+        <div class="brand-name">Emailing</div>
       </div>
       <nav class="nav" id="nav">
         <a href="#/dashboard" data-nav="dashboard"><span data-icon="dashboard"></span>Dashboard</a>
@@ -53,7 +67,10 @@
             <div class="user-status"><span class="dot"></span><span id="user-role">Connected</span></div>
           </div>
         </div>
-        <button class="btn block" id="signout"><span data-icon="logout" data-size="17"></span>Sign out</button>
+        <!-- One GrandPine sign-in covers every staff tool: staff sign out (or switch account) in the
+             Workspace, not here. A new tab, since the Workspace opened this app in one. -->
+        <a class="btn block" id="workspace-link" href="https://workspace.grandpine.com" target="_blank" rel="noopener">Workspace ↗</a>
+        <button class="btn block" id="signout" style="display:none"><span data-icon="logout" data-size="17"></span>Sign out</button>
       </div>
     </aside>
     <div class="scrim" id="scrim"></div>
@@ -61,8 +78,8 @@
     <main class="main">
       <header class="topbar">
         <button class="hamburger" id="hamburger" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false"><span data-icon="menu" data-size="24"></span></button>
-        <div class="logo-tile sm" data-icon="mail" data-size="18"></div>
-        <div style="min-width:0"><div class="tb-title" id="tb-title">Dashboard</div><div class="tb-sub">Emailing · Workspace</div></div>
+        <img class="tb-logo" src="/assets/grandpine-logo.svg" alt="GrandPine Capital">
+        <div style="min-width:0"><div class="tb-title" id="tb-title">Dashboard</div><div class="tb-sub">Emailing</div></div>
       </header>
       <div class="content" id="view"></div>
     </main>

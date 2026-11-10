@@ -400,3 +400,33 @@ details.ind-group summary { cursor: pointer; margin-bottom: 8px; font-size: 14px
   .stat .value { font-size: 22px; }
   .row > .field { min-width: 100%; }
 }
+
+/* ---------- GrandPine branding, as the Helpdesk and the other staff portals ---------- */
+.brand-logo { height: 28px; width: auto; display: block; }
+.brand .brand-name { border-left: 1px solid var(--border); padding-left: 12px; line-height: 26px; font-weight: 700; font-size: 16px; letter-spacing: -0.01em; color: #004b93; }
+.tb-logo { height: 22px; width: auto; display: block; }
+
+/* Staff sign-in: the CRM's sign-in page (Helpdesk styles.css .sso-*) */
+.sso-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #f4f6f9; color: #191c1e; font-size: 14px; line-height: 20px; }
+.sso-inner { width: 100%; max-width: 440px; padding: 16px; }
+.sso-brand { text-align: center; margin-bottom: 24px; }
+.sso-brand h1 { margin: 0; font-family: 'Hanken Grotesk', system-ui, sans-serif; font-weight: 700; font-size: calc(1.375rem + 1.5vw); line-height: 1.2; letter-spacing: -0.02em; }
+@media (min-width: 1200px) { .sso-brand h1 { font-size: 2.5rem; } }
+.sso-brand img { height: 72px; width: auto; max-width: 100%; vertical-align: middle; }
+.sso-app { margin: 8px 0 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #43474e; }
+.sso-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 32px; margin-bottom: 16px; word-wrap: break-word; }
+.sso-alert { padding: 12px 14px; margin-bottom: 16px; border-radius: 6px; font-size: 13.5px; background: #fef2f2; color: #b91c1c; }
+.sso-status { font-size: 0.875em; text-align: center; margin: 0 0 16px; color: #1a3a5c; }
+.sso-btn { width: 100%; height: 48px; display: flex; align-items: center; justify-content: center; gap: 16px; padding: 6px 12px; font-family: inherit; font-size: 16px; font-weight: 400; line-height: 1.5;
+  color: #6c757d; background: transparent; border: 1px solid #6c757d; border-radius: 8px; cursor: pointer; text-decoration: none; user-select: none;
+  transition: color .15s ease-in-out, background-color .15s ease-in-out, border-color .15s ease-in-out, box-shadow .15s ease-in-out; }
+.sso-btn:hover { color: #ffffff; background: #6c757d; border-color: #6c757d; text-decoration: none; }
+.sso-btn:focus-visible { outline: 0; box-shadow: 0 0 0 0.25rem rgba(108, 117, 125, 0.5); }
+.sso-btn:disabled { color: #6c757d; background: transparent; opacity: 0.65; pointer-events: none; }
+.sso-spinner { display: inline-block; width: 1rem; height: 1rem; margin-right: 8px; vertical-align: -0.125em; border: 0.2em solid currentColor; border-right-color: transparent; border-radius: 50%; animation: sso-spin 0.75s linear infinite; }
+@keyframes sso-spin { to { transform: rotate(360deg); } }
+.sso-error { color: #dc3545; font-size: 0.875em; margin-top: 8px; }
+.sso-note { margin-top: 24px; padding-top: 16px; border-top: 1px solid #e2e8f0; }
+.sso-note > div { display: flex; gap: 8px; padding: 16px; border-radius: 8px; background: #e0f2fe; }
+.sso-note .icon { color: #1a3a5c; margin-top: 2px; flex-shrink: 0; }
+.sso-note span:last-child { font-size: 0.875em; color: #1a3a5c; line-height: 1.5; }
