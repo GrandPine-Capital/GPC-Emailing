@@ -160,7 +160,7 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: 200}
 		next.ServeHTTP(sw, r)
-		if !strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/hook" {
+		if !strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/hook" && !strings.HasPrefix(r.URL.Path, "/hooks/") {
 			return
 		}
 		s.log.InfoContext(r.Context(), "request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "ms", time.Since(start).Milliseconds())

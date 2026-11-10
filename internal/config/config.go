@@ -36,6 +36,10 @@ type Config struct {
 	// and advances automations. Actions in the app also wake it straight away.
 	WorkerInterval time.Duration
 	WorkerEnabled  bool
+	// Transactional mail (receipts): its sender, and GPC-Payment's event secret.
+	BillingFrom        string // BILLING_FROM, e.g. billing@grandpine.com; default MAIL_FROM
+	BillingFromName    string // BILLING_FROM_NAME, default the Settings sender name
+	PaymentEventSecret string // PAYMENT_EVENT_SECRET: verifies POST /hooks/payments; unset turns it off
 }
 
 func get(key, def string) string {
@@ -63,6 +67,9 @@ func Load() (Config, error) {
 		MailFrom:              strings.ToLower(get("MAIL_FROM", "")),
 		ReplyDomain:           strings.ToLower(strings.TrimPrefix(get("REPLY_DOMAIN", ""), "@")),
 		WorkerEnabled:         get("WORKER_ENABLED", "true") != "false",
+		BillingFrom:           strings.ToLower(get("BILLING_FROM", "")),
+		BillingFromName:       get("BILLING_FROM_NAME", ""),
+		PaymentEventSecret:    get("PAYMENT_EVENT_SECRET", ""),
 	}
 	var errs []error
 	interval, err := time.ParseDuration(get("WORKER_INTERVAL", "5m"))
@@ -101,6 +108,9 @@ func Load() (Config, error) {
 		errs = append(errs, errors.New("SES_REGION and MAIL_FROM go together"))
 	} else if c.MailFrom != "" && !strings.Contains(c.MailFrom, "@") {
 		errs = append(errs, fmt.Errorf("MAIL_FROM must be an e-mail address: %q", c.MailFrom))
+	}
+	if c.BillingFrom != "" && !strings.Contains(c.BillingFrom, "@") {
+		errs = append(errs, fmt.Errorf("BILLING_FROM must be an e-mail address: %q", c.BillingFrom))
 	}
 	if c.SESInboundQueueURL != "" && c.ReplyDomain == "" {
 		errs = append(errs, errors.New("SES_INBOUND_QUEUE_URL needs REPLY_DOMAIN"))
