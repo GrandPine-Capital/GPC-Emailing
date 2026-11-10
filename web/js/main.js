@@ -59,9 +59,13 @@ async function boot() {
       const back = await session.completeSignIn();
       history.replaceState(null, '', back.startsWith('/') ? back : '/');
     } catch (e) {
-      session.markSignInFailed();
       history.replaceState(null, '', '/');
-      return showSignin(e.status === 403 ? 'noaccess' : 'button', e.status === 403 ? '' : e.message);
+      // No Emailing role: say so, and let the next visit go straight to SSO again, so access
+      // granted in the IAM console works on a reload. (This cannot loop: the page stops here.)
+      if (e.status === 403) return showSignin('noaccess');
+      // Anything else: the next visit waits for a click instead of redirecting into the same error.
+      session.markSignInFailed();
+      return showSignin('button', e.message);
     }
   }
   if (!session.hasSession()) {
