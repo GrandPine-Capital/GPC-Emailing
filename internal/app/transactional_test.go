@@ -1,15 +1,20 @@
 package app_test
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/grandpine-capital/gpc-emailing/internal/app"
 	"github.com/grandpine-capital/gpc-emailing/internal/ses"
+	"github.com/grandpine-capital/gpc-emailing/internal/testdb"
 )
 
 const paymentSecret = "test-payment-secret"
@@ -159,5 +164,24 @@ func TestKeyedTemplateCannotBeDeleted(t *testing.T) {
 	var ue app.UserError
 	if !errors.As(err, &ue) {
 		t.Fatalf("delete: %v", err)
+	}
+}
+
+// A no-reply sender carries no Reply-To, and the e-mail says not to reply.
+func TestNoReplySender(t *testing.T) {
+	db, box, key := testdb.New(t)
+	e := &env{db: db, ses: &fakeSES{}, now: time.Date(2026, 11, 10, 2, 0, 0, 0, time.UTC), ctx: context.Background()}
+	cfg := mailCfg
+	cfg.TransactionalFrom, cfg.TransactionalFromName = "no-reply@grandpine.test", "GrandPine Capital"
+	e.svc = app.New(db, box, key, "https://mail.test", e.ses, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	e.svc.Now = func() time.Time { return e.now }
+	e.svc.PaymentEventSecret = paymentSecret
+	e.paymentEvent(t, succeeded)
+	msg := decoded(e.ses.since(0)[0])
+	if !strings.Contains(msg, `From: "GrandPine Capital" <no-reply@grandpine.test>`) || strings.Contains(msg, "Reply-To:") {
+		t.Fatalf("no-reply receipt headers:\n%s", msg[:strings.Index(msg, "Content-Type")])
+	}
+	if !strings.Contains(msg, "please do not reply") {
+		t.Error("receipt does not say not to reply")
 	}
 }

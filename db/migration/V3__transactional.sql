@@ -65,7 +65,7 @@ $$<!DOCTYPE html>
 <tr><td style="padding:16px 32px 8px;font-size:15px;line-height:1.6;">
 <p><a href="{{receipt_url}}" style="display:inline-block;background:#14532d;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:6px;">View your receipt</a></p>
 <p style="font-size:13px;color:#6b7280;">For an event, the receipt page has the QR code you show at check-in.</p>
-<p>Questions? Just reply to this e-mail.</p>
+<p style="font-size:13px;color:#6b7280;">This is an automated e-mail; please do not reply to it.</p>
 </td></tr>
 <tr><td style="padding:16px 32px 28px;font-size:12px;color:#9ca3af;">{{company_address}}</td></tr>
 </table></td></tr></table>
@@ -96,7 +96,8 @@ $$<!DOCTYPE html>
 </td></tr>
 <tr><td style="padding:16px 32px 8px;font-size:15px;line-height:1.6;">
 <p><a href="{{instructions_url}}" style="display:inline-block;background:#14532d;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:6px;">Payment instructions and upload proof</a></p>
-<p>We will e-mail your receipt once the transfer is confirmed. Questions? Just reply to this e-mail.</p>
+<p>We will e-mail your receipt once the transfer is confirmed.</p>
+<p style="font-size:13px;color:#6b7280;">This is an automated e-mail; please do not reply to it.</p>
 </td></tr>
 <tr><td style="padding:16px 32px 28px;font-size:12px;color:#9ca3af;">{{company_address}}</td></tr>
 </table></td></tr></table>
@@ -122,7 +123,7 @@ $$<!DOCTYPE html>
 </table>
 </td></tr>
 <tr><td style="padding:16px 32px 8px;font-size:15px;line-height:1.6;">
-<p>Questions? Just reply to this e-mail.</p>
+<p style="font-size:13px;color:#6b7280;">This is an automated e-mail; please do not reply to it.</p>
 </td></tr>
 <tr><td style="padding:16px 32px 28px;font-size:12px;color:#9ca3af;">{{company_address}}</td></tr>
 </table></td></tr></table>
