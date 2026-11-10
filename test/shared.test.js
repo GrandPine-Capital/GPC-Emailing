@@ -2,9 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { renderDesign } = require('../shared/render-blocks');
-const Core = require('../shared/email-core');
-const Catalog = require('../shared/catalog');
+const { renderDesign } = require('../web/shared/render-blocks');
+const Core = require('../web/shared/email-core');
+const Catalog = require('../web/shared/catalog');
 
 test('renderDesign builds table-based HTML for every block type', () => {
   const types = ['heading', 'text', 'image', 'button', 'divider', 'spacer', 'columns', 'social', 'footer', 'html'];
@@ -32,7 +32,7 @@ test('merge tags support fallbacks and HTML escaping', () => {
 test('email helpers', () => {
   assert.ok(Core.isEmail('a.b+c@d.co'));
   assert.ok(!Core.isEmail('nope'));
-  assert.ok(!Core.isEmail('a/b@c.com'), 'slashes are not allowed (Firestore document ids)');
+  assert.ok(!Core.isEmail('a/b@c.com'), 'slashes are not allowed');
   assert.equal(Core.emailKey(' Alice@Acme.COM '), 'alice@acme.com');
   assert.deepEqual(Core.normaliseTags('a, b;a | c'), ['a', 'b', 'c']);
   assert.equal(Core.addressOf('Alice <ALICE@x.com>'), 'alice@x.com');
@@ -49,11 +49,7 @@ test('catalog', () => {
   assert.ok(Catalog.TRIGGERS.reply_received);
 });
 
-test('generated copies of shared/ are up to date (run `npm run sync`)', () => {
-  const root = path.join(__dirname, '..');
-  for (const f of fs.readdirSync(path.join(root, 'shared'))) {
-    const src = fs.readFileSync(path.join(root, 'shared', f), 'utf8');
-    assert.ok(fs.readFileSync(path.join(root, 'hosting', 'shared', f), 'utf8').endsWith(src), `hosting/shared/${f}`);
-    assert.ok(fs.readFileSync(path.join(root, 'apps-script', `Shared_${f.replace(/-/g, '_')}`), 'utf8').endsWith(src), `apps-script copy of ${f}`);
-  }
+test('internal/catalog/catalog.json matches web/shared/catalog.js (run `node scripts/gen-catalog.js`)', () => {
+  const gen = require('../scripts/gen-catalog');
+  assert.equal(fs.readFileSync(gen.out, 'utf8'), gen.build());
 });
