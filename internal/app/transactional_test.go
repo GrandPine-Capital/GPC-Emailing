@@ -85,7 +85,7 @@ func TestPaymentReceipt(t *testing.T) {
 	// A permanent bounce of the receipt shows on its row.
 	e.ses.events = append(e.ses.events, ses.Event{Type: "Bounce", Permanent: true, MessageID: "ses-1", Recipients: []string{"aisyah@example.com"}})
 	e.tick(t)
-	rows, err := e.svc.Transactionals(e.ctx, "payment", "Pay123", "", 0)
+	rows, err := e.svc.Transactionals(e.ctx, "payment", "Pay123", "", "", 0)
 	if err != nil || len(rows) != 1 || rows[0].Status != "bounced" {
 		t.Fatalf("after bounce: %+v %v", rows, err)
 	}
@@ -183,5 +183,62 @@ func TestNoReplySender(t *testing.T) {
 	}
 	if !strings.Contains(msg, "please do not reply") {
 		t.Error("receipt does not say not to reply")
+	}
+}
+
+// The Transactional page: an e-mail turned off is not sent, another template and sender can be
+// chosen, and the defaults come back when cleared.
+func TestTransactionalConfig(t *testing.T) {
+	e := setup(t, true)
+	e.svc.PaymentEventSecret = paymentSecret
+	var custom string
+	if err := e.db.Pool.QueryRow(e.ctx, `INSERT INTO templates (id, name, mode, subject, html) VALUES ('t-custom', 'Our receipt', 'html',
+		'Thanks {{first_name}}!', '<p>Custom receipt for {{item}}</p>') RETURNING id`).Scan(&custom); err != nil {
+		t.Fatal(err)
+	}
+	err := e.svc.SaveTransactionalConfig(e.ctx, map[string]any{
+		"from_email": "billing@grandpine.test", "from_name": "GP Billing",
+		"events": map[string]any{
+			"payment.succeeded": map[string]any{"enabled": true, "template_id": custom},
+			"payment.refunded":  map[string]any{"enabled": false},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := e.svc.TransactionalConfig(e.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evs := cfg["events"].([]map[string]any)
+	if evs[0]["template_id"] != custom || evs[0]["custom_template"] != true || evs[2]["enabled"] != false || evs[1]["template_id"] != "txn-payment-pending" {
+		t.Fatalf("config = %+v", evs)
+	}
+
+	e.paymentEvent(t, succeeded)
+	msg := decoded(e.ses.since(0)[0])
+	for _, want := range []string{"Subject: Thanks Aisyah!", "Custom receipt for Workshop", `From: "GP Billing" <billing@grandpine.test>`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("receipt lacks %q", want)
+		}
+	}
+	refunded := strings.Replace(succeeded, "payment.succeeded", "payment.refunded", 1)
+	if out := e.paymentEvent(t, refunded); out["ignored"] == nil || e.ses.count() != 1 {
+		t.Fatalf("refund while off: %v, sent %d", out, e.ses.count())
+	}
+
+	var ue app.UserError
+	if err := e.svc.SaveTransactionalConfig(e.ctx, map[string]any{"from_email": "x@unverified.test"}); !errors.As(err, &ue) {
+		t.Fatalf("unverified sender: %v", err)
+	}
+	if err := e.svc.SaveTransactionalConfig(e.ctx, map[string]any{"events": map[string]any{"payment.succeeded": map[string]any{"template_id": "gone"}}}); !errors.As(err, &ue) {
+		t.Fatalf("missing template: %v", err)
+	}
+	// Cleared: defaults again.
+	if err := e.svc.SaveTransactionalConfig(e.ctx, map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if from, _ := e.svc.TransactionalFrom(e.ctx); from != "hello@grandpine.test" {
+		t.Fatalf("default sender = %s", from)
 	}
 }
