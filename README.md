@@ -71,6 +71,33 @@ replies there instead, and they are not tracked. Forwarded copies carry
 Mail never fails for lack of SES: without it, queued mail waits and automation sends retry
 hourly. **Dry-run mode** (Settings) records and tracks sends without delivering.
 
+## Transactional mail (receipts)
+
+Other systems ask Emailing to send one e-mail to one person about one thing: a receipt, a
+bank-transfer reminder, a refund notice. That mail is **not marketing**: it goes even to
+people who unsubscribed, makes no contact, carries no unsubscribe footer and is not tracked.
+It is sent from `BILLING_FROM`, with replies through the reply domain to the same name.
+
+| Payment event | Template key | Sent |
+|---|---|---|
+| `payment.succeeded` | `payment_receipt` | Receipt, with the link to the receipt page (event check-in QR) |
+| `payment.pending` | `payment_pending` | Bank-transfer instructions: account, reference, pay-by date |
+| `payment.refunded` | `payment_refunded` | Refund notice |
+
+GPC-Payment delivers its events to `POST /hooks/payments` (outbox target `emailing`, its
+`EMAILING_BASE_URL` and `EMAILING_EVENT_SECRET`), signed like its CRM events: header
+`sig` = hex HMAC-SHA256 of the body with `PAYMENT_EVENT_SECRET` (the same value). Each send
+is kept in `transactional`, once per event and order, so a retried event sends nothing new;
+a failed send is retried by the worker (1, 2, 4 … minutes, 8 tries), and SES bounces and
+complaints mark the row. Staff see them at `GET /api/transactional?source=payment&reference=<order id>`
+and resend with `POST /api/transactional/{id}/resend`.
+
+The templates are ordinary HTML templates in the dashboard (category *transactional*): edit
+the wording there. A template with a key cannot be deleted. Merge tags: `first_name`,
+`full_name`, `item`, `amount` (`RM 1,234.50`), `paid_at`, `payment_method`, `order_id`,
+`receipt_url`, `instructions_url`, `payment_reference`, `expires_at`, `bank_name`,
+`account_name`, `account_number`, `duitnow_id`, `refunded_at`, `company_address`.
+
 ## Run it locally
 
 ```bash
@@ -106,7 +133,9 @@ receiving region (SES does not receive mail in ap-southeast-5). Then:
    sending domain's DKIM records are already in place for `grandpine.com`.
 3. **Service environment** (the task definition sets it): `DATABASE_URL`,
    `SETTINGS_ENCRYPTION_KEY`, `PUBLIC_BASE_URL`, `KEYCLOAK_*`, `SES_REGION`, `MAIL_FROM`,
-   `SES_CONFIGURATION_SET`, `SES_EVENTS_QUEUE_URL`, `REPLY_DOMAIN`, `SES_INBOUND_QUEUE_URL`.
+   `SES_CONFIGURATION_SET`, `SES_EVENTS_QUEUE_URL`, `REPLY_DOMAIN`, `SES_INBOUND_QUEUE_URL`;
+   for receipts, `PAYMENT_EVENT_SECRET`, `BILLING_FROM` (e.g. `billing@grandpine.com`) and
+   optionally `BILLING_FROM_NAME`.
 
 `SETTINGS_ENCRYPTION_KEY` and `PUBLIC_BASE_URL` must stay the same once mail has gone out:
 the key signs click-tracking links; the URL is in every tracking and unsubscribe link.

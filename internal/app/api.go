@@ -159,6 +159,10 @@ func (s *Service) DuplicateTemplate(ctx context.Context, id string) (map[string]
 }
 
 func (s *Service) DeleteTemplate(ctx context.Context, id string) error {
+	var key *string
+	if err := s.db.Pool.QueryRow(ctx, `SELECT key FROM templates WHERE id = $1`, id).Scan(&key); err == nil && key != nil {
+		return userErr("This template is used by other systems (" + *key + "): edit it instead of deleting it")
+	}
 	return store.Affected(s.db.Pool.Exec(ctx, `DELETE FROM templates WHERE id = $1`, id))
 }
 

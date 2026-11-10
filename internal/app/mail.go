@@ -33,6 +33,9 @@ type MailConfig struct {
 	// ReplyDomain receives replies (SES inbound): mail from name@grandpine.com carries
 	// Reply-To name@<ReplyDomain>; replies are recorded and forwarded to name@grandpine.com.
 	ReplyDomain string
+	// TransactionalFrom and TransactionalFromName send receipts and other transactional mail
+	// (BILLING_FROM, BILLING_FROM_NAME); empty uses the default sender and name.
+	TransactionalFrom, TransactionalFromName string
 }
 
 // ErrNoMailer: sending is not set up on the server.

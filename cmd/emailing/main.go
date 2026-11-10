@@ -73,7 +73,12 @@ func run(log *slog.Logger) error {
 	if cfg.SESInboundQueueURL == "" {
 		log.Warn("SES_INBOUND_QUEUE_URL not set: replies are not received")
 	}
-	svc := app.New(db, box, cfg.SettingsEncryptionKey, cfg.PublicBaseURL, mail, app.MailConfig{DefaultFrom: cfg.MailFrom, ReplyDomain: cfg.ReplyDomain}, log)
+	svc := app.New(db, box, cfg.SettingsEncryptionKey, cfg.PublicBaseURL, mail, app.MailConfig{DefaultFrom: cfg.MailFrom, ReplyDomain: cfg.ReplyDomain,
+		TransactionalFrom: cfg.BillingFrom, TransactionalFromName: cfg.BillingFromName}, log)
+	svc.PaymentEventSecret = cfg.PaymentEventSecret
+	if cfg.PaymentEventSecret == "" {
+		log.Warn("PAYMENT_EVENT_SECRET not set: payment receipts are off (POST /hooks/payments answers 503)")
+	}
 
 	if cfg.WorkerEnabled {
 		go svc.Run(ctx, cfg.WorkerInterval)
