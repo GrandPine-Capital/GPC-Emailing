@@ -1,9 +1,11 @@
 name: Deploy to AWS
 
 # Builds the app image (web app + Go service) and the Flyway image, migrates the
-# database, then rolls the ECS service. Branch staging deploys to the GitHub
-# environment `staging` (https://emailing-staging.grandpine.com; ValueFarm.Infra
-# staging/emailing.tf), branch main to `prod` (https://emailing.grandpine.com;
+# database, then rolls the ECS service. A merge into the repository's default branch
+# (claude/vigilant-noether-4p9j69, kept from the Firebase build; only an admin can
+# rename it) or a push to staging deploys to the GitHub environment `staging`
+# (https://emailing-staging.grandpine.com; ValueFarm.Infra staging/emailing.tf),
+# branch main to `prod` (https://emailing.grandpine.com;
 # ValueFarm.Infra portal/emailing.tf). `terraform -chdir=staging output
 # emailing_github_config` and `terraform -chdir=portal output emailing_github_config`
 # print each environment's secret and variables.
@@ -13,11 +15,12 @@ name: Deploy to AWS
 
 on:
   push:
-    branches: [staging, main]
+    branches: [claude/vigilant-noether-4p9j69, staging, main]
   workflow_dispatch:
 
 concurrency:
-  group: deploy-${{ github.ref_name }}
+  # One deploy at a time per environment (two branches deploy staging).
+  group: deploy-${{ github.ref_name == 'main' && 'prod' || 'staging' }}
   cancel-in-progress: false
 
 permissions:
