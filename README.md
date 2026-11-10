@@ -76,7 +76,8 @@ hourly. **Dry-run mode** (Settings) records and tracks sends without delivering.
 Other systems ask Emailing to send one e-mail to one person about one thing: a receipt, a
 bank-transfer reminder, a refund notice. That mail is **not marketing**: it goes even to
 people who unsubscribed, makes no contact, carries no unsubscribe footer and is not tracked.
-It is sent from `BILLING_FROM`, with replies through the reply domain to the same name.
+It is sent from `BILLING_FROM`, with replies through the reply domain to the same name; a
+no-reply sender (`no-reply@…`, `noreply@…`) gets no Reply-To at all.
 
 | Payment event | Template key | Sent |
 |---|---|---|

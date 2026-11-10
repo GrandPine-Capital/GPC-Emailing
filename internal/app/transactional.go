@@ -117,6 +117,12 @@ func (s *Service) TransactionalFrom(ctx context.Context) (email, name string) {
 	return email, name
 }
 
+// IsNoReply says addr is a no-reply sender (no-reply@, noreply@, do-not-reply@).
+func IsNoReply(addr string) bool {
+	l := strings.ReplaceAll(strings.ReplaceAll(localOf(addr), "-", ""), "_", "")
+	return l == "noreply" || l == "donotreply"
+}
+
 // SendTransactional sends the queued row id now if it is due. It returns the row's status; a
 // failed attempt stays queued for the worker until txnMaxAttempts.
 func (s *Service) SendTransactional(ctx context.Context, id string) (string, error) {
@@ -172,12 +178,16 @@ func (s *Service) SendTransactional(ctx context.Context, id string) (string, err
 	subject = core.Merge(subject, vars, false)
 
 	from, fromName := s.TransactionalFrom(ctx)
-	replyTo := s.replyAddress(from)
-	if replyTo == "" {
-		replyTo = from
+	// A no-reply sender gets no Reply-To: nobody reads that mailbox, so replies are not collected.
+	noReply := IsNoReply(from)
+	replyTo := ""
+	if !noReply {
+		if replyTo = s.replyAddress(from); replyTo == "" {
+			replyTo = from
+		}
 	}
 	res, err := s.Send(ctx, Outgoing{To: r.ToEmail, ToName: r.ToName, Subject: subject, HTML: html, Text: text,
-		FromEmail: from, FromName: fromName, ReplyTo: replyTo,
+		FromEmail: from, FromName: fromName, ReplyTo: replyTo, NoReplyTo: noReply,
 		Headers: map[string]string{"X-GPC-Transactional": r.TemplateKey}})
 	if err != nil {
 		return fail(err, false)
