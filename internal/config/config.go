@@ -24,10 +24,14 @@ type Config struct {
 	KeycloakIssuer       string
 	KeycloakClientID     string
 	KeycloakClientSecret string
-	// The Google OAuth client an administrator connects the sending Gmail mailbox through
-	// (Settings → Gmail). Without it the app runs, but nothing can be sent or read.
-	GoogleClientID     string
-	GoogleClientSecret string
+	// Amazon SES. Without SESRegion and MailFrom the app runs, but nothing is sent (dry-run
+	// mode still records campaigns).
+	SESRegion           string // SES_REGION: where mail is sent from
+	SESConfigurationSet string // SES_CONFIGURATION_SET: its bounce/complaint events
+	SESEventsQueueURL   string // SES_EVENTS_QUEUE_URL: SQS queue of those events
+	SESInboundQueueURL  string // SES_INBOUND_QUEUE_URL: SQS queue of S3 events for received mail
+	MailFrom            string // MAIL_FROM: the default sender, on a verified SES identity
+	ReplyDomain         string // REPLY_DOMAIN: SES receives replies here (MX to SES inbound)
 	// WorkerInterval is how often the background worker sends queued mail, reads the inbox
 	// and advances automations. Actions in the app also wake it straight away.
 	WorkerInterval time.Duration
@@ -52,8 +56,12 @@ func Load() (Config, error) {
 		KeycloakIssuer:        strings.TrimRight(get("KEYCLOAK_ISSUER", ""), "/"),
 		KeycloakClientID:      get("KEYCLOAK_CLIENT_ID", ""),
 		KeycloakClientSecret:  get("KEYCLOAK_CLIENT_SECRET", ""),
-		GoogleClientID:        get("GOOGLE_CLIENT_ID", ""),
-		GoogleClientSecret:    get("GOOGLE_CLIENT_SECRET", ""),
+		SESRegion:             get("SES_REGION", ""),
+		SESConfigurationSet:   get("SES_CONFIGURATION_SET", ""),
+		SESEventsQueueURL:     get("SES_EVENTS_QUEUE_URL", ""),
+		SESInboundQueueURL:    get("SES_INBOUND_QUEUE_URL", ""),
+		MailFrom:              strings.ToLower(get("MAIL_FROM", "")),
+		ReplyDomain:           strings.ToLower(strings.TrimPrefix(get("REPLY_DOMAIN", ""), "@")),
 		WorkerEnabled:         get("WORKER_ENABLED", "true") != "false",
 	}
 	var errs []error
@@ -89,8 +97,13 @@ func Load() (Config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("AUTH_MODE must be keycloak or dev, got %q", c.AuthMode))
 	}
-	if (c.GoogleClientID == "") != (c.GoogleClientSecret == "") {
-		errs = append(errs, errors.New("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET go together"))
+	if (c.SESRegion == "") != (c.MailFrom == "") {
+		errs = append(errs, errors.New("SES_REGION and MAIL_FROM go together"))
+	} else if c.MailFrom != "" && !strings.Contains(c.MailFrom, "@") {
+		errs = append(errs, fmt.Errorf("MAIL_FROM must be an e-mail address: %q", c.MailFrom))
+	}
+	if c.SESInboundQueueURL != "" && c.ReplyDomain == "" {
+		errs = append(errs, errors.New("SES_INBOUND_QUEUE_URL needs REPLY_DOMAIN"))
 	}
 	return c, errors.Join(errs...)
 }

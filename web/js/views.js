@@ -13,8 +13,8 @@
   }
 
   function workerBanner(meta) {
-    if (!meta.gmailConnected) {
-      return `<div class="banner warn"><strong>Gmail not connected:</strong> nothing is sent and replies are not read until ${App.isAdmin() ? 'you connect' : 'an admin connects'} the sending mailbox in <a href="#/settings">Settings</a>.${meta.dryRun ? ' Dry-run mode is on, so campaigns are recorded without delivery.' : ''}</div>`;
+    if (!meta.mailConfigured) {
+      return `<div class="banner warn"><strong>Sending is not set up:</strong> the server has no Amazon SES configuration, so queued email waits.${meta.dryRun ? ' Dry-run mode is on, so campaigns are recorded without delivery.' : ''}</div>`;
     }
     if (!meta.workerOnline) {
       return `<div class="banner warn"><strong>Worker idle:</strong> the worker last ran ${meta.lastTick ? fmtDate(meta.lastTick) : 'never'}. If this lasts, the service may be down.</div>`;
@@ -49,7 +49,7 @@
       </div>
       <div class="card"><h2>Getting started</h2>
         <ol style="margin:0;padding-left:20px;line-height:2">
-          <li>Connect the Gmail mailbox that sends (and receives replies) and review <a href="#/settings">Settings</a>.</li>
+          <li>Review the sender, limits and sender identities in <a href="#/settings">Settings</a>.</li>
           <li>Import contacts from CSV in <a href="#/contacts">Contacts</a>, or discover leads by country &amp; industry in <a href="#/leads">Lead Finder</a>.</li>
           <li>Design an email with the <a href="#/templates">drag &amp; drop builder or HTML editor</a> (standard templates included).</li>
           <li>Create a <a href="#/campaigns">campaign</a>, send a test, then send now or schedule.</li>
@@ -123,13 +123,12 @@
           <div class="field"><label>Subject line</label><input type="text" name="subject" value="${esc(c.subject)}" placeholder="{{first_name}}, ..."></div>
           <div class="field"><label>Preheader <span class="hint">(preview text in inbox)</span></label><input type="text" name="preheader" value="${esc(c.preheader)}"></div>
           <div class="row"><div class="field"><label>From name</label><input type="text" name="from_name" value="${esc(c.from_name)}" placeholder="${esc(settings.from_name)}"></div>
-            <div class="field"><label>From email</label><select name="from_email"><option value="">${esc(settings.default_from_email || meta.account || 'Default sender')} (default)</option>
-              ${(settings.senders || []).filter((x) => x.verified && !x.primary).map((x) => `<option value="${esc(x.email)}" ${c.from_email === x.email ? 'selected' : ''}>${esc(x.email)}${x.name ? ` — ${esc(x.name)}` : ''}</option>`).join('')}</select>
-              <div class="hint">More addresses: <a href="#/settings">Settings → Sender identities</a>.</div></div></div>
-          <div class="field"><label>Reply-to <span class="hint">(optional; replies are detected in the Gmail inbox)</span></label><input type="email" name="reply_to" value="${esc(c.reply_to)}" placeholder="${esc(settings.reply_to || meta.account || '')}"></div>
+            <div class="field"><label>From email</label><input type="email" name="from_email" value="${esc(c.from_email)}" placeholder="${esc(meta.account || 'Default sender')} (default)">
+              <div class="hint">${App.sendersHint(settings)}</div></div></div>
+          <div class="field"><label>Reply-to <span class="hint">(optional: leave empty so replies come back here and are forwarded to the From address)</span></label><input type="email" name="reply_to" value="${esc(c.reply_to)}" placeholder="${esc(settings.reply_to || (meta.replyDomain ? 'name@' + meta.replyDomain : ''))}"></div>
           <h2 style="margin-top:20px">2. Recipients</h2>
           ${lists.length ? lists.map((l) => `<label class="check"><input type="checkbox" name="list_ids" data-group value="${l.id}" ${c.list_ids.map(String).includes(String(l.id)) ? 'checked' : ''}> ${esc(l.name)} <span class="muted">(${l.subscribed || 0})</span></label>`).join('') : '<p class="muted">No lists yet. <a href="#/lists">Create a list</a> and add contacts.</p>'}
-          <p class="hint">Unsubscribed and bounced contacts and duplicates across lists are skipped automatically. Gmail limits sending to about 500/day (free Gmail) or 2,000/day (Google Workspace); large campaigns continue automatically on the following days.</p>
+          <p class="hint">Unsubscribed and bounced contacts and duplicates across lists are skipped automatically. Sending stays within the daily limit in Settings and the Amazon SES quota; large campaigns continue automatically on the following days.</p>
           <h2 style="margin-top:20px">3. Content</h2>
           <div class="field"><label>Template</label><select name="template_id">${opts(templates, c.template_id, { blank: '— choose a template —' })}</select></div>
           <p><a href="#/templates/new-dragdrop">Design a new template</a> · <span id="edit-tpl"></span></p>
@@ -529,8 +528,8 @@
   route(/^#\/replies$/, async (root) => {
     const [meta, list] = await Promise.all([App.getMeta(true), api.get('/replies')]);
     root.innerHTML = `
-      <div class="page-head"><div><h1>Replies</h1><div class="subtitle">Email and WhatsApp replies, matched to the message they answer.</div></div><div class="actions"><button class="btn" id="log">${App.icon('plus', 17)}Log a reply manually</button><button class="btn primary" id="poll" ${meta.workerConfigured ? '' : 'disabled'}>${App.icon('refresh', 17)}Check Gmail now</button></div></div>
-      ${workerBanner(meta)}<p class="muted">Replies are read from your Gmail inbox every 5 minutes and matched to the email they answer.</p>
+      <div class="page-head"><div><h1>Replies</h1><div class="subtitle">Email and WhatsApp replies, matched to the message they answer.</div></div><div class="actions"><button class="btn" id="log">${App.icon('plus', 17)}Log a reply manually</button><button class="btn primary" id="poll" ${meta.workerConfigured ? '' : 'disabled'}>${App.icon('refresh', 17)}Check for replies now</button></div></div>
+      ${workerBanner(meta)}<p class="muted">Replies arrive at the reply address on every email${meta.replyDomain ? ` (…@${esc(meta.replyDomain)})` : ''}, are matched to the email they answer, and are forwarded to the sender's own mailbox.</p>
       <div class="card">${list.length ? list.map((r) => `<div style="padding:12px 0;border-bottom:1px solid var(--border)">
         <div class="row" style="align-items:center">${r.channel === 'whatsapp' ? `<span class="badge green">${App.icon('whatsapp', 13)}WhatsApp</span>` : `<span class="badge blue">${App.icon('mail', 13)}Email</span>`}
         <strong>${r.contact_id ? `<a href="#/contacts/${encodeURIComponent(r.contact_id)}">${esc([r.first_name, r.last_name].join(' ').trim() || r.from_email || r.phone)}</a>` : esc(r.from_email || r.phone)}</strong>

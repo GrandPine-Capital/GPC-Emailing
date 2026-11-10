@@ -17,7 +17,7 @@ import (
 const workerLock = 0x6770_656d_6c01 // "gpeml" 1
 
 // Tick runs the worker's steps once within maxDur (tick() in Code.js): campaign and automation
-// mail, the inbox, automations and the lead finder. Busy when another tick holds the lock.
+// mail, SES bounces and complaints, replies, automations and the lead finder. Busy when another tick holds the lock.
 func (s *Service) Tick(ctx context.Context, maxDur time.Duration) (map[string]any, error) {
 	conn, err := s.db.Pool.Acquire(ctx)
 	if err != nil {
@@ -44,8 +44,8 @@ func (s *Service) Tick(ctx context.Context, maxDur time.Duration) (map[string]an
 		}
 		n, err := fn()
 		switch {
-		case errors.Is(err, ErrNoMailbox):
-			summary[name] = "Gmail not connected"
+		case errors.Is(err, ErrNoMailer):
+			summary[name] = "sending not set up"
 		case err != nil:
 			summary[name] = "error: " + err.Error()
 			s.log.Error("worker step", "step", name, "err", err)
@@ -54,7 +54,8 @@ func (s *Service) Tick(ctx context.Context, maxDur time.Duration) (map[string]an
 		}
 	}
 	step("campaigns", func() (int, error) { return s.processQueue(ctx, hasTime) })
-	step("replies", func() (int, error) { return s.pollInbox(ctx, hasTime) })
+	step("bounces", func() (int, error) { return s.processEvents(ctx, hasTime) })
+	step("replies", func() (int, error) { return s.processInbound(ctx, hasTime) })
 	step("automations", func() (int, error) { return s.processDue(ctx, hasTime) })
 	step("leads", func() (int, error) { return s.processLeads(ctx, hasTime) })
 	b, _ := json.Marshal(summary)

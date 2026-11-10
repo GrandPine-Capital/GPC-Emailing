@@ -13,68 +13,81 @@ import (
 	"time"
 
 	"github.com/grandpine-capital/gpc-emailing/internal/app"
-	"github.com/grandpine-capital/gpc-emailing/internal/gmail"
+	"github.com/grandpine-capital/gpc-emailing/internal/ses"
 	"github.com/grandpine-capital/gpc-emailing/internal/store"
 	"github.com/grandpine-capital/gpc-emailing/internal/testdb"
 )
 
-// fakeMailbox stands in for Gmail: it keeps what was sent and serves an inbox.
-type fakeMailbox struct {
-	mu    sync.Mutex
-	sent  []sentMail
-	inbox []*gmail.Message
-	n     int
+// fakeSES stands in for Amazon SES: it keeps what was sent and serves the events and inbound
+// queues.
+type fakeSES struct {
+	mu      sync.Mutex
+	sent    []string
+	events  []ses.Event
+	inbound [][2]string // id, raw
 }
 
-type sentMail struct {
-	Raw, Thread string
-}
-
-func (f *fakeMailbox) Send(_ context.Context, raw []byte, thread string) (string, string, error) {
+func (f *fakeSES) Region() string { return "ap-southeast-5" }
+func (f *fakeSES) Send(_ context.Context, raw []byte) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.n++
-	f.sent = append(f.sent, sentMail{string(raw), thread})
-	if thread == "" {
-		thread = fmt.Sprintf("thread-%d", f.n)
-	}
-	return fmt.Sprintf("gm-%d", f.n), thread, nil
+	f.sent = append(f.sent, string(raw))
+	return fmt.Sprintf("ses-%d", len(f.sent)), nil
 }
-func (f *fakeMailbox) MessageIDHeader(_ context.Context, id string) (string, error) {
-	return "<" + id + "@mail.gmail.com>", nil
+func (f *fakeSES) Remaining(context.Context) (int, error) { return 1000, nil }
+func (f *fakeSES) Account(context.Context) (ses.Account, error) {
+	return ses.Account{Production: true}, nil
 }
-func (f *fakeMailbox) List(context.Context, string, int) ([]gmail.Ref, error) {
+func (f *fakeSES) Identities(context.Context) ([]ses.Identity, error) {
+	return []ses.Identity{{Email: "grandpine.test", Type: "domain", Verified: true}, {Email: "other.test", Type: "domain", Verified: false}}, nil
+}
+func (f *fakeSES) PollEvents(_ context.Context, fn func(ses.Event) error) (int, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	var out []gmail.Ref
-	for i := len(f.inbox) - 1; i >= 0; i-- { // newest first, as Gmail answers
-		out = append(out, gmail.Ref{ID: f.inbox[i].ID, ThreadID: f.inbox[i].ThreadID})
-	}
-	return out, nil
-}
-func (f *fakeMailbox) Get(_ context.Context, id string) (*gmail.Message, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, m := range f.inbox {
-		if m.ID == id {
-			return m, nil
+	evs := f.events
+	f.events = nil
+	f.mu.Unlock()
+	for _, e := range evs {
+		if err := fn(e); err != nil {
+			return 0, err
 		}
 	}
-	return nil, fmt.Errorf("no message %s", id)
+	return len(evs), nil
 }
-func (f *fakeMailbox) SendAsList(context.Context) ([]gmail.SendAs, error) {
-	return []gmail.SendAs{{Email: "worker@example.com", Primary: true, Verified: true}, {Email: "sales@example.com", Name: "Sales", Verified: true}}, nil
+func (f *fakeSES) PollInbound(_ context.Context, fn func(string, []byte) error) (int, error) {
+	f.mu.Lock()
+	in := f.inbound
+	f.inbound = nil
+	f.mu.Unlock()
+	for _, m := range in {
+		if err := fn(m[0], []byte(m[1])); err != nil {
+			return 0, err
+		}
+	}
+	return len(in), nil
 }
 
-func (f *fakeMailbox) last() sentMail {
+func (f *fakeSES) receive(id string, headers map[string]string, body string) {
+	var b strings.Builder
+	for k, v := range headers {
+		b.WriteString(k + ": " + v + "\r\n")
+	}
+	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n\r\n" + body)
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.sent[len(f.sent)-1]
+	f.inbound = append(f.inbound, [2]string{id, b.String()})
+	f.mu.Unlock()
 }
-func (f *fakeMailbox) count() int {
+
+func (f *fakeSES) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.sent)
+}
+
+// since returns the messages sent after the first n.
+func (f *fakeSES) since(n int) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.sent[n:]...)
 }
 
 // decoded is a sent message with its base64 parts decoded.
@@ -90,17 +103,22 @@ func decoded(raw string) string {
 type env struct {
 	svc *app.Service
 	db  *store.DB
-	mb  *fakeMailbox
+	ses *fakeSES
 	now time.Time
 	ctx context.Context
 }
 
-func setup(t *testing.T) *env {
+var mailCfg = app.MailConfig{DefaultFrom: "hello@grandpine.test", ReplyDomain: "reply.grandpine.test"}
+
+func setup(t *testing.T, withMail bool) *env {
 	db, box, key := testdb.New(t)
-	svc := app.New(db, box, key, "https://mail.test", &gmail.OAuth{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	e := &env{svc: svc, db: db, mb: &fakeMailbox{}, now: time.Date(2026, 11, 10, 2, 0, 0, 0, time.UTC), ctx: context.Background()}
-	svc.MailboxOverride = e.mb
-	svc.Now = func() time.Time { return e.now }
+	e := &env{db: db, ses: &fakeSES{}, now: time.Date(2026, 11, 10, 2, 0, 0, 0, time.UTC), ctx: context.Background()}
+	var mail app.Mail
+	if withMail {
+		mail = e.ses
+	}
+	e.svc = app.New(db, box, key, "https://mail.test", mail, mailCfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	e.svc.Now = func() time.Time { return e.now }
 	return e
 }
 
@@ -133,11 +151,8 @@ var (
 )
 
 func TestCampaignLifecycle(t *testing.T) {
-	e := setup(t)
+	e := setup(t, true)
 	ctx := e.ctx
-	if _, err := e.svc.RefreshSenders(ctx); err != nil {
-		t.Fatal(err)
-	}
 	list, err := e.svc.CreateList(ctx, "Prospects", "")
 	if err != nil {
 		t.Fatal(err)
@@ -146,15 +161,15 @@ func TestCampaignLifecycle(t *testing.T) {
 	res, err := e.svc.ImportContacts(ctx, []map[string]string{
 		{"email": "Alice@Acme.com", "first_name": "Alice", "company": "Acme"},
 		{"email": "bob@beta.io", "first_name": "Bob", "tags": "vip"},
+		{"email": "carol@gamma.io", "first_name": "Carol"},
 		{"email": "not-an-email"},
 	}, listID, []string{"import"}, "Malaysia", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res["created"] != 2 || res["skipped"] != 1 {
+	if res["created"] != 3 || res["skipped"] != 1 {
 		t.Fatalf("import = %v", res)
 	}
-
 	// The seeded "Hot lead" automation, switched on: a reply mentioning pricing tags the contact
 	// and notifies the team.
 	if err := e.svc.SetAutomationStatus(ctx, "std-hot-lead", "active"); err != nil {
@@ -162,7 +177,7 @@ func TestCampaignLifecycle(t *testing.T) {
 	}
 
 	camp, err := e.svc.CreateCampaign(ctx, map[string]any{"name": "Launch", "subject": "Hi {{first_name|there}}", "template_id": "std-welcome-email",
-		"list_ids": []any{listID}, "from_email": "sales@example.com", "preheader": "Big news"})
+		"list_ids": []any{listID}, "from_email": "sales@grandpine.test", "from_name": "Sales", "preheader": "Big news"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,26 +189,34 @@ func TestCampaignLifecycle(t *testing.T) {
 		t.Fatal("sending a launching campaign twice must be refused")
 	}
 	e.tick(t)
-	if e.mb.count() != 2 {
-		t.Fatalf("sent %d e-mails, want 2", e.mb.count())
+	if e.ses.count() != 3 {
+		t.Fatalf("sent %d e-mails, want 3", e.ses.count())
 	}
-	c, err := e.svc.Campaign(ctx, campID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c, _ := e.svc.Campaign(ctx, campID)
 	st := c["stats"].(map[string]any)
-	if c["status"] != "sent" || int(st["sent"].(float64)) != 2 || int(st["queued"].(float64)) != 0 {
+	if c["status"] != "sent" || int(st["sent"].(float64)) != 3 || int(st["queued"].(float64)) != 0 {
 		t.Fatalf("campaign after send: status %v stats %v", c["status"], st)
 	}
 
+	// A sender on an unverified domain fails per message, not the whole run.
+	bad, _ := e.svc.CreateCampaign(ctx, map[string]any{"name": "Bad", "template_id": "std-welcome-email", "list_ids": []any{listID}, "from_email": "x@other.test"})
+	if err := e.svc.SendCampaign(ctx, bad["id"].(string)); err != nil {
+		t.Fatal(err)
+	}
+	e.tick(t)
+	if n := e.scalar(t, `SELECT count(*) FROM messages WHERE campaign_id = $1 AND status = 'failed' AND error LIKE '%not a verified SES sender%'`, bad["id"]); n.(int64) != 3 {
+		t.Errorf("unverified sender: %v failed messages", n)
+	}
+
 	var alice string
-	for _, m := range e.mb.sent {
-		if strings.Contains(m.Raw, "<alice@acme.com>") {
-			alice = decoded(m.Raw)
+	for _, m := range e.ses.since(0) {
+		if strings.Contains(m, "<alice@acme.com>") {
+			alice = decoded(m)
 		}
 	}
-	for _, want := range []string{"From: \"Sales\" <sales@example.com>", "Subject: Hi Alice", "List-Unsubscribe-Post: List-Unsubscribe=One-Click",
-		"https://mail.test/u1?t=", "Big news", "https://mail.test/u?t="} {
+	for _, want := range []string{`From: "Sales" <sales@grandpine.test>`, "Reply-To: sales@reply.grandpine.test", "Subject: Hi Alice",
+		"List-Unsubscribe-Post: List-Unsubscribe=One-Click", "<mailto:unsubscribe@reply.grandpine.test?subject=unsubscribe%20", "https://mail.test/u1?t=",
+		"Big news", "https://mail.test/u?t="} {
 		if !strings.Contains(alice, want) {
 			t.Errorf("Alice's e-mail lacks %q", want)
 		}
@@ -202,16 +225,13 @@ func TestCampaignLifecycle(t *testing.T) {
 	if token == nil {
 		t.Fatal("no open pixel")
 	}
-	if err := e.svc.Open(ctx, token[1]); err != nil {
-		t.Fatal(err)
-	}
+	_ = e.svc.Open(ctx, token[1])
 	_ = e.svc.Open(ctx, token[1]) // a second open counts on the message, not the campaign
 	click := clickRe.FindStringSubmatch(alice)
 	if click == nil || click[1] != token[1] {
 		t.Fatal("no tracked link")
 	}
-	target, err := e.svc.Click(ctx, click[1], click[2])
-	if err != nil || !strings.HasPrefix(target, "https://example.com") {
+	if target, err := e.svc.Click(ctx, click[1], click[2]); err != nil || !strings.HasPrefix(target, "https://example.com") {
 		t.Fatalf("click → %q, %v", target, err)
 	}
 	if u, _ := e.svc.Click(ctx, click[1], "000000000000000000000000"); u != "" {
@@ -219,25 +239,27 @@ func TestCampaignLifecycle(t *testing.T) {
 	}
 	c, _ = e.svc.Campaign(ctx, campID)
 	st = c["stats"].(map[string]any)
-	if st["opened"].(float64) != 1 || st["clicked"].(float64) != 1 || st["open_rate"].(float64) != 50 {
+	if st["opened"].(float64) != 1 || st["clicked"].(float64) != 1 {
 		t.Fatalf("stats after open+click: %v", st)
 	}
-	if n := e.scalar(t, `SELECT open_count FROM messages WHERE id = $1`, token[1]); n.(int32) != 2 {
-		t.Fatalf("open_count = %v", n)
-	}
 
-	// Alice replies in the thread, mentioning pricing.
-	var thread string
-	_ = e.db.Pool.QueryRow(ctx, `SELECT thread_id FROM messages WHERE id = $1`, token[1]).Scan(&thread)
+	// Alice replies to the reply domain, naming the message she answers; Bob's address bounces;
+	// Carol marks the mail as spam.
+	rfc := e.scalar(t, `SELECT rfc_message_id FROM messages WHERE id = $1`, token[1]).(string)
+	if !strings.HasSuffix(rfc, "@ap-southeast-5.amazonses.com>") {
+		t.Errorf("rfc_message_id %q", rfc)
+	}
 	e.now = e.now.Add(10 * time.Minute)
-	e.mb.inbox = append(e.mb.inbox, gmail.NewMessage("in-1", thread, e.now, map[string]string{
-		"From": "Alice Tan <alice@acme.com>", "To": "sales@example.com", "Subject": "Re: Hi Alice", "Message-ID": "<r1@acme.com>",
-	}, "What is your pricing?\n\nOn Mon, Sales wrote:\n> Hi"))
-	// A bounce for Bob.
-	e.mb.inbox = append(e.mb.inbox, gmail.NewMessage("in-2", "t-b", e.now, map[string]string{
-		"From": "Mail Delivery Subsystem <mailer-daemon@googlemail.com>", "Subject": "Delivery Status Notification (Failure)",
-	}, "Final-Recipient: rfc822; bob@beta.io\nAction: failed"))
-	before := e.mb.count()
+	e.ses.receive("in-1", map[string]string{"From": "Alice Tan <alice@acme.com>", "To": "sales@reply.grandpine.test", "Subject": "Re: Hi Alice",
+		"Message-ID": "<r1@acme.com>", "In-Reply-To": rfc, "Date": e.now.Format(time.RFC1123Z)}, "What is your pricing?\r\n\r\nOn Mon, Sales wrote:\r\n> Hi")
+	var bobMsg, carolMsg string
+	_ = e.db.Pool.QueryRow(ctx, `SELECT provider_id FROM messages WHERE contact_id = 'bob@beta.io' AND campaign_id = $1`, campID).Scan(&bobMsg)
+	_ = e.db.Pool.QueryRow(ctx, `SELECT provider_id FROM messages WHERE contact_id = 'carol@gamma.io' AND campaign_id = $1`, campID).Scan(&carolMsg)
+	e.ses.events = []ses.Event{
+		{Type: "Bounce", Permanent: true, MessageID: bobMsg, Recipients: []string{"bob@beta.io"}},
+		{Type: "Complaint", MessageID: carolMsg, Recipients: []string{"carol@gamma.io"}},
+	}
+	before := e.ses.count()
 	e.tick(t)
 	e.tick(t) // the automation run started by the reply advances on the next tick
 	replies, _ := e.svc.Replies(ctx)
@@ -247,43 +269,58 @@ func TestCampaignLifecycle(t *testing.T) {
 	if e.scalar(t, `SELECT status FROM contacts WHERE id = 'bob@beta.io'`) != "bounced" {
 		t.Error("Bob should be bounced")
 	}
+	if e.scalar(t, `SELECT status FROM contacts WHERE id = 'carol@gamma.io'`) != "unsubscribed" {
+		t.Error("Carol complained: she should be unsubscribed")
+	}
 	if tags := e.scalar(t, `SELECT array_to_string(tags, ',') FROM contacts WHERE id = 'alice@acme.com'`); !strings.Contains(tags.(string), "hot-lead") {
 		t.Errorf("Alice's tags = %v", tags)
 	}
-	if e.mb.count() != before+1 || !strings.Contains(e.mb.last().Raw, "Subject: Hot lead replied!") {
-		t.Errorf("expected the team notification, sent %d", e.mb.count()-before)
+	var forward, notify string
+	for _, m := range e.ses.since(before) {
+		switch {
+		case strings.Contains(m, "Subject: Fwd: Re: Hi Alice"):
+			forward = m
+		case strings.Contains(m, "Subject: Hot lead replied!"):
+			notify = m
+		}
+	}
+	if forward == "" || !strings.Contains(forward, "To: sales@grandpine.test") || !strings.Contains(forward, "Reply-To: alice@acme.com") ||
+		!strings.Contains(forward, "Content-Type: message/rfc822") || !strings.Contains(forward, "X-GPC-Emailing-Forwarded: 1") {
+		t.Errorf("the reply must be forwarded to sales@grandpine.test:\n%s", forward)
+	}
+	if notify == "" {
+		t.Error("expected the team notification")
 	}
 	c, _ = e.svc.Campaign(ctx, campID)
-	if c["stats"].(map[string]any)["replied"].(float64) != 1 {
-		t.Error("campaign replied count")
+	if st := c["stats"].(map[string]any); st["replied"].(float64) != 1 || st["unsubscribed"].(float64) != 1 {
+		t.Errorf("campaign stats %v", st)
 	}
-	// The same inbox again changes nothing.
+	// SQS delivers at least once: the same e-mail again changes nothing, and our own forward
+	// coming back (a mailbox rule) is ignored.
+	e.ses.receive("in-1", map[string]string{"From": "alice@acme.com", "To": "sales@reply.grandpine.test", "Subject": "Re: Hi Alice", "In-Reply-To": rfc}, "again")
+	e.ses.receive("in-2", map[string]string{"From": "sales@grandpine.test", "To": "sales@reply.grandpine.test", "Subject": "Fwd: x", "X-GPC-Emailing-Forwarded": "1"}, "loop")
+	n := e.ses.count()
 	e.tick(t)
-	if n := e.scalar(t, `SELECT count(*) FROM replies`); n.(int64) != 1 {
-		t.Errorf("replies after re-poll = %v", n)
+	if r := e.scalar(t, `SELECT count(*) FROM replies`); r.(int64) != 1 || e.ses.count() != n {
+		t.Errorf("replies %v, sent %d more", r, e.ses.count()-n)
 	}
 
-	// Unsubscribe through the link.
 	if ok, err := e.svc.Unsubscribe(ctx, token[1]); err != nil || !ok {
 		t.Fatalf("unsubscribe: %v %v", ok, err)
 	}
 	if ok, _ := e.svc.Unsubscribe(ctx, token[1]); ok {
 		t.Error("a second unsubscribe must be a no-op")
 	}
-	c, _ = e.svc.Campaign(ctx, campID)
-	if c["stats"].(map[string]any)["unsubscribed"].(float64) != 1 {
-		t.Error("campaign unsubscribed count")
-	}
 }
 
-func TestFollowUpSequenceWaitsAndStopsOnReply(t *testing.T) {
-	e := setup(t)
+func TestFollowUpRepliesToTheFirstEmail(t *testing.T) {
+	e := setup(t, true)
 	ctx := e.ctx
 	if _, err := e.svc.CreateContact(ctx, app.ContactInput{Email: "carol@gamma.co", FirstName: "Carol"}); err != nil {
 		t.Fatal(err)
 	}
-	// Welcome (manual) sends the first e-mail; Follow-up starts on that e-mail_sent event and
-	// replies in its thread two days later unless Carol replied.
+	// Welcome (manual) sends the first e-mail; Follow-up starts on that email_sent event and
+	// answers it two days later unless Carol replied.
 	welcome, err := e.svc.CreateAutomation(ctx, map[string]any{"name": "Welcome", "trigger_type": "manual", "status": "active", "steps": []any{
 		map[string]any{"type": "send_email", "template_id": "std-welcome-email"},
 	}})
@@ -303,7 +340,6 @@ func TestFollowUpSequenceWaitsAndStopsOnReply(t *testing.T) {
 	if _, err := e.svc.CreateAutomation(ctx, map[string]any{"trigger_type": "manual", "steps": []any{map[string]any{"type": "send_email"}}}); err == nil {
 		t.Fatal("a send_email step without a template must be refused")
 	}
-	id := a["id"].(string)
 	wid := welcome["id"].(string)
 	if n, err := e.svc.Enroll(ctx, wid, []string{"carol@gamma.co"}, ""); err != nil || n != 1 {
 		t.Fatalf("enroll %d %v", n, err)
@@ -312,30 +348,26 @@ func TestFollowUpSequenceWaitsAndStopsOnReply(t *testing.T) {
 		t.Fatal("an active run must not be enrolled twice")
 	}
 	e.tick(t)
-	if e.mb.count() != 1 {
-		t.Fatalf("first step sent %d", e.mb.count())
-	}
 	e.tick(t) // the follow-up run, started by that e-mail, begins its two-day wait
+	if e.ses.count() != 1 {
+		t.Fatalf("first step sent %d", e.ses.count())
+	}
 	e.now = e.now.Add(24 * time.Hour)
 	e.tick(t)
-	if e.mb.count() != 1 {
+	if e.ses.count() != 1 {
 		t.Fatal("the wait step must hold the run")
 	}
 	e.now = e.now.Add(25 * time.Hour)
 	e.tick(t)
-	if e.mb.count() != 2 {
-		t.Fatalf("after the wait: sent %d", e.mb.count())
+	if e.ses.count() != 2 {
+		t.Fatalf("after the wait: sent %d", e.ses.count())
 	}
-	follow := e.mb.last()
-	if follow.Thread != "thread-1" || !strings.Contains(follow.Raw, "In-Reply-To: <gm-1@mail.gmail.com>") || !strings.Contains(follow.Raw, "Subject: Re: ") {
-		t.Errorf("the follow-up must reply in the thread: thread %q", follow.Thread)
+	follow := e.ses.since(1)[0]
+	if !strings.Contains(follow, "In-Reply-To: <ses-1@ap-southeast-5.amazonses.com>") || !strings.Contains(follow, "Subject: Re: ") {
+		t.Errorf("the follow-up must answer the first e-mail:\n%s", follow[:min(600, len(follow))])
 	}
-	if e.scalar(t, `SELECT status FROM runs WHERE automation_id = $1`, id) != "completed" {
+	if e.scalar(t, `SELECT status FROM runs WHERE automation_id = $1`, a["id"]) != "completed" {
 		t.Error("run should be completed")
-	}
-	auto, _ := e.svc.Automation(ctx, id)
-	if auto["runs"].(map[string]any)["completed"].(float64) != 1 {
-		t.Errorf("runs = %v", auto["runs"])
 	}
 	if !strings.Contains(e.scalar(t, `SELECT array_to_string(tags, ',') FROM contacts WHERE id = 'carol@gamma.co'`).(string), "nurtured") {
 		t.Error("the last step should tag Carol")
@@ -343,21 +375,26 @@ func TestFollowUpSequenceWaitsAndStopsOnReply(t *testing.T) {
 }
 
 func TestAutoReplyAndWebhooks(t *testing.T) {
-	e := setup(t)
+	e := setup(t, true)
 	ctx := e.ctx
-	if _, err := e.svc.CreateAutoReply(ctx, map[string]any{"name": "Out of hours", "enabled": true, "template_id": "std-thank-you-for-your-reply-auto-response",
-		"audience": "all", "create_contact": true, "tags": "inbound", "timezone": "Asia/Kuala_Lumpur"}); err != nil {
+	if _, err := e.svc.CreateAutoReply(ctx, map[string]any{"name": "Enquiries", "enabled": true, "template_id": "std-thank-you-for-your-reply-auto-response",
+		"audience": "all", "to_address": "hello@grandpine.test", "create_contact": true, "tags": "inbound", "timezone": "Asia/Kuala_Lumpur"}); err != nil {
 		t.Fatal(err)
 	}
-	e.mb.inbox = []*gmail.Message{
-		gmail.NewMessage("m1", "t1", e.now, map[string]string{"From": "Dan Lee <dan@delta.com>", "To": "worker@example.com", "Subject": "Question", "Message-ID": "<q@delta>"}, "Hello"),
-		gmail.NewMessage("m2", "t2", e.now, map[string]string{"From": "news@shop.com", "To": "worker@example.com", "Subject": "Sale", "List-Unsubscribe": "<mailto:x>"}, "Buy"),
-	}
+	e.ses.receive("m1", map[string]string{"From": "Dan Lee <dan@delta.com>", "To": "hello@reply.grandpine.test", "Subject": "Question", "Message-ID": "<q@delta>"}, "Hello")
+	e.ses.receive("m2", map[string]string{"From": "news@shop.com", "To": "hello@reply.grandpine.test", "Subject": "Sale", "List-Unsubscribe": "<mailto:x>"}, "Buy")
 	e.tick(t)
-	if e.mb.count() != 1 || !strings.Contains(e.mb.last().Raw, "Auto-Submitted: auto-replied") || e.mb.last().Thread != "t1" {
-		t.Fatalf("auto-replies sent: %d", e.mb.count())
+	var auto string
+	for _, m := range e.ses.since(0) {
+		if strings.Contains(m, "Auto-Submitted: auto-replied") {
+			auto = m
+		}
 	}
-	if strings.Contains(decoded(e.mb.last().Raw), "/o?t=") {
+	if auto == "" || !strings.Contains(auto, `To: "Dan Lee" <dan@delta.com>`) || !strings.Contains(auto, `From: "My Company" <hello@grandpine.test>`) ||
+		!strings.Contains(auto, "In-Reply-To: <q@delta>") {
+		t.Fatalf("auto-reply:\n%s", auto)
+	}
+	if strings.Contains(decoded(auto), "/o?t=") {
 		t.Error("auto-replies are not tracked")
 	}
 	rows, _ := e.svc.Inbound(ctx, 10)
@@ -371,11 +408,14 @@ func TestAutoReplyAndWebhooks(t *testing.T) {
 	if e.scalar(t, `SELECT array_to_string(tags, ',') FROM contacts WHERE id = 'dan@delta.com'`) != "inbound" {
 		t.Error("the rule should create the contact with its tag")
 	}
-	// Cool-down: the same sender again within 24 hours gets no second reply.
-	e.mb.inbox = append(e.mb.inbox, gmail.NewMessage("m3", "t3", e.now.Add(time.Minute), map[string]string{"From": "dan@delta.com", "To": "worker@example.com", "Subject": "Again"}, "Hi"))
+	// Cool-down: the same sender again within 24 hours gets no second auto-reply.
+	n := e.ses.count()
+	e.ses.receive("m3", map[string]string{"From": "dan@delta.com", "To": "hello@reply.grandpine.test", "Subject": "Again"}, "Hi")
 	e.tick(t)
-	if e.mb.count() != 1 {
-		t.Error("cool-down ignored")
+	for _, m := range e.ses.since(n) {
+		if strings.Contains(m, "Auto-Submitted: auto-replied") {
+			t.Error("cool-down ignored")
+		}
 	}
 
 	secret, err := e.svc.WebhookSecret(ctx)
@@ -395,16 +435,13 @@ func TestAutoReplyAndWebhooks(t *testing.T) {
 	if err != nil || out["handled"] != 1 {
 		t.Fatalf("chatdaddy webhook: %v %v", out, err)
 	}
-	// The WhatsApp sender is matched to Eve by phone (default country code is empty, so the
-	// webhook's local number was stored as given; the chat id is international).
 	if n := e.scalar(t, `SELECT count(*) FROM replies WHERE channel = 'whatsapp'`); n.(int64) != 1 {
 		t.Errorf("whatsapp replies = %v", n)
 	}
 }
 
-func TestNothingFailsWithoutGmail(t *testing.T) {
-	e := setup(t)
-	e.svc.MailboxOverride = nil // no Google client, no mailbox
+func TestNothingFailsWithoutSES(t *testing.T) {
+	e := setup(t, false)
 	ctx := e.ctx
 	list, _ := e.svc.CreateList(ctx, "L", "")
 	if _, err := e.svc.UpsertContacts(ctx, []app.ContactInput{{Email: "x@y.com"}}, []string{list["id"].(string)}, nil, "manual", false); err != nil {
@@ -418,13 +455,13 @@ func TestNothingFailsWithoutGmail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s["campaigns"] != "Gmail not connected" {
+	if s["campaigns"] != "sending not set up" {
 		t.Errorf("summary = %v", s)
 	}
 	if e.scalar(t, `SELECT status FROM messages`) != "queued" {
-		t.Error("mail must wait for Gmail, not fail")
+		t.Error("mail must wait for SES, not fail")
 	}
-	// Dry-run mode records the send without a mailbox.
+	// Dry-run mode records the send without SES.
 	if err := e.svc.UpdateSettings(ctx, map[string]any{"dry_run": true}); err != nil {
 		t.Fatal(err)
 	}

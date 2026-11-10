@@ -307,20 +307,21 @@ func (s *Server) routes(mux *http.ServeMux) {
 		s.reply(w, r, ok, err)
 	})
 	h("POST "+p+"/settings/check", func(w http.ResponseWriter, r *http.Request) {
-		g, err := svc.GmailStatus(r.Context())
-		if err != nil {
-			s.fail(w, r, err)
+		m := svc.MailStatus(r.Context())
+		switch {
+		case m["configured"] != true:
+			writeJSON(w, 200, map[string]any{"ok": false, "message": app.ErrNoMailer.Error()})
 			return
-		}
-		if g["connected"] != true {
-			writeJSON(w, 200, map[string]any{"ok": false, "message": app.ErrNoMailbox.Error()})
+		case m["error"] != nil:
+			writeJSON(w, 200, map[string]any{"ok": false, "message": "SES answered: " + sv(m["error"])})
 			return
 		}
 		if _, err := svc.RefreshSenders(r.Context()); err != nil {
-			writeJSON(w, 200, map[string]any{"ok": false, "message": "Gmail answered: " + err.Error()})
+			writeJSON(w, 200, map[string]any{"ok": false, "message": "SES answered: " + err.Error()})
 			return
 		}
-		writeJSON(w, 200, map[string]any{"ok": true, "message": "Connected. Sending as " + sv(g["email"]) + "; " + strconv.Itoa(svc.RemainingToday(r.Context())) + " emails left today."})
+		writeJSON(w, 200, map[string]any{"ok": true, "message": "Connected to Amazon SES (" + sv(m["region"]) + "). Sending as " + sv(m["default_from"]) + "; " +
+			strconv.Itoa(svc.RemainingToday(r.Context())) + " emails left today."})
 	})
 	adm("POST "+p+"/senders/refresh", func(w http.ResponseWriter, r *http.Request) {
 		list, err := svc.RefreshSenders(r.Context())
@@ -332,16 +333,11 @@ func (s *Server) routes(mux *http.ServeMux) {
 			text = "Test message from GPC Emailing ✅"
 		}
 		err := svc.SendWhatsApp(r.Context(), sv(b["phone"]), app.WhatsAppOpts{Provider: sv(b["provider"]), Text: text})
-		if err != nil && !errors.Is(err, app.ErrNoMailbox) {
+		if err != nil {
 			err = app.UserError{Msg: err.Error()}
 		}
 		s.reply(w, r, ok, err)
 	}))
-	adm("POST "+p+"/gmail/connect", func(w http.ResponseWriter, r *http.Request) {
-		u, err := svc.GmailConnectURL(user(r).Email)
-		s.reply(w, r, map[string]string{"url": u}, err)
-	})
-	adm("POST "+p+"/gmail/disconnect", func(w http.ResponseWriter, r *http.Request) { s.reply(w, r, ok, svc.DisconnectGmail(r.Context())) })
 
 	// auto-reply rules and the inbox log
 	h("GET "+p+"/autoreplies", func(w http.ResponseWriter, r *http.Request) {

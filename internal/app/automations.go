@@ -33,7 +33,6 @@ type Event struct {
 	Text           string `json:"text,omitempty"`
 	Event          string `json:"event,omitempty"`
 	Subject        string `json:"subject,omitempty"`
-	GmailThreadID  string `json:"gmail_thread_id,omitempty"`
 	RFCMessageID   string `json:"rfc_message_id,omitempty"`
 	To             string `json:"to,omitempty"`
 }
@@ -270,11 +269,8 @@ func (s *Service) executeStep(ctx context.Context, step map[string]any, run *Run
 		}
 		var th threadOpts
 		if truthy(step["reply_in_thread"]) && str(trig["messageId"]) != "" {
-			if orig, err := store.Struct[Message](ctx, s.db.Pool, `SELECT * FROM messages WHERE id = $1`, str(trig["messageId"])); err == nil && orig.ThreadID != nil && orig.GmailID != nil {
-				th.ThreadID = *orig.ThreadID
-				if mb, _, err := s.mailbox(ctx); err == nil {
-					th.InReplyTo, _ = mb.MessageIDHeader(ctx, *orig.GmailID)
-				}
+			if orig, err := store.Struct[Message](ctx, s.db.Pool, `SELECT * FROM messages WHERE id = $1`, str(trig["messageId"])); err == nil && orig.RFCMessageID != nil {
+				th.InReplyTo = *orig.RFCMessageID
 				if str(step["subject"]) == "" {
 					if regexp.MustCompile(`(?i)^re:`).MatchString(orig.Subject) {
 						subject = orig.Subject
@@ -287,9 +283,9 @@ func (s *Service) executeStep(ctx context.Context, step map[string]any, run *Run
 					}
 				}
 			}
-		} else if truthy(step["reply_in_thread"]) && str(trig["gmail_thread_id"]) != "" {
+		} else if truthy(step["reply_in_thread"]) && str(trig["rfc_message_id"]) != "" {
 			// Reply to an incoming e-mail that was not a reply to one of ours.
-			th = threadOpts{ThreadID: str(trig["gmail_thread_id"]), InReplyTo: str(trig["rfc_message_id"])}
+			th = threadOpts{InReplyTo: str(trig["rfc_message_id"])}
 			if str(step["subject"]) == "" {
 				base := str(trig["subject"])
 				if base == "" {
@@ -447,7 +443,7 @@ func (s *Service) executeStep(ctx context.Context, step map[string]any, run *Run
 				to = s.Account(ctx)
 			}
 			if to == "" {
-				return stepResult{}, errors.New("no address to notify (and Gmail is not connected)")
+				return stepResult{}, errors.New("no address to notify: set the step's e-mail or a default From address")
 			}
 			subject := str(step["subject"])
 			if subject == "" {

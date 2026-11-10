@@ -16,9 +16,9 @@ import (
 	"github.com/grandpine-capital/gpc-emailing/internal/app"
 	"github.com/grandpine-capital/gpc-emailing/internal/auth"
 	"github.com/grandpine-capital/gpc-emailing/internal/config"
-	"github.com/grandpine-capital/gpc-emailing/internal/gmail"
 	"github.com/grandpine-capital/gpc-emailing/internal/httpapi"
 	"github.com/grandpine-capital/gpc-emailing/internal/secretbox"
+	"github.com/grandpine-capital/gpc-emailing/internal/ses"
 	"github.com/grandpine-capital/gpc-emailing/internal/store"
 	"github.com/grandpine-capital/gpc-emailing/internal/ui"
 )
@@ -59,11 +59,21 @@ func run(log *slog.Logger) error {
 		realm = &auth.Keycloak{Issuer: cfg.KeycloakIssuer, ClientID: cfg.KeycloakClientID, ClientSecret: cfg.KeycloakClientSecret}
 		staff = realm
 	}
-	google := &gmail.OAuth{ClientID: cfg.GoogleClientID, ClientSecret: cfg.GoogleClientSecret, RedirectURL: cfg.PublicBaseURL + "/oauth/google/callback"}
-	if !google.Configured() {
-		log.Warn("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set: Gmail cannot be connected, so nothing is sent (dry-run mode still works)")
+	var mail app.Mail
+	if cfg.SESRegion != "" {
+		c, err := ses.New(ctx, ses.Config{Region: cfg.SESRegion, ConfigurationSet: cfg.SESConfigurationSet,
+			EventsQueueURL: cfg.SESEventsQueueURL, InboundQueueURL: cfg.SESInboundQueueURL})
+		if err != nil {
+			return err
+		}
+		mail = c
+	} else {
+		log.Warn("SES_REGION / MAIL_FROM not set: nothing is sent (dry-run mode still works)")
 	}
-	svc := app.New(db, box, cfg.SettingsEncryptionKey, cfg.PublicBaseURL, google, log)
+	if cfg.SESInboundQueueURL == "" {
+		log.Warn("SES_INBOUND_QUEUE_URL not set: replies are not received")
+	}
+	svc := app.New(db, box, cfg.SettingsEncryptionKey, cfg.PublicBaseURL, mail, app.MailConfig{DefaultFrom: cfg.MailFrom, ReplyDomain: cfg.ReplyDomain}, log)
 
 	if cfg.WorkerEnabled {
 		go svc.Run(ctx, cfg.WorkerInterval)

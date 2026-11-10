@@ -1,4 +1,4 @@
-/* Settings: sender, limits, Gmail and the worker, lead sources, sender identities, access, integrations. */
+/* Settings: sender, limits, Amazon SES and the worker, lead sources, sender identities, access, integrations. */
 (() => {
   const { api, esc, toast, confirmDialog, fmtDate, icon, cardHead, fieldLabel } = App;
 
@@ -25,52 +25,30 @@
     return `<input type="${type}" ${attrs}>`;
   }
 
-  /** Step-by-step guide for adding another sending/receiving address. */
-  function connectGuide(account) {
-    const acct = esc(account || 'your worker Gmail account');
-    App.modal(`<div class="row" style="align-items:center;margin-bottom:6px"><h2 style="margin:0;flex:1">Connect an email address</h2><button class="btn icon ghost" data-close>${icon('x', 18)}</button></div>
-      <p class="muted">Any address you connect can <b>send</b> campaigns and automations, and email sent <b>to</b> it can be auto-replied. Everything runs through ${acct}.</p>
-      <div class="seg" id="guide-seg" style="margin-bottom:16px"><button class="on" data-tab="google">Gmail / Google Workspace</button><button data-tab="other">Other provider (cPanel, Outlook, Zoho…)</button></div>
-      <div data-pane="google">
-        <ol style="line-height:1.9;padding-left:20px;margin-top:0">
-          <li>Open <a href="https://mail.google.com/mail/u/0/#settings/accounts" target="_blank" rel="noopener">Gmail → Settings → Accounts and Import</a> signed in as <b>${acct}</b>.</li>
-          <li>Under <b>Send mail as</b>, click <b>Add another email address</b>, enter the name and address, keep <i>Treat as an alias</i> ticked.</li>
-          <li>For a Google Workspace alias of the same user it is verified instantly. For another Gmail address, Google emails a confirmation link to that address - open it.</li>
-          <li><b>Receiving:</b> in the other Gmail account go to Settings → <b>Forwarding and POP/IMAP</b> → <b>Add a forwarding address</b> = ${acct}, confirm, and choose <i>Forward a copy</i>.</li>
-          <li>Come back here and click <b>Refresh from Gmail</b>. The address appears as <span class="badge green">Verified</span>.</li>
-        </ol></div>
-      <div data-pane="other" style="display:none">
-        <ol style="line-height:1.9;padding-left:20px;margin-top:0">
-          <li>In <a href="https://mail.google.com/mail/u/0/#settings/accounts" target="_blank" rel="noopener">Gmail → Settings → Accounts and Import</a> (as <b>${acct}</b>) click <b>Add another email address</b> under <b>Send mail as</b>.</li>
-          <li>Enter the address (e.g. <code>info@yourcompany.com</code>), untick <i>Treat as an alias</i> if it is a separate mailbox, then enter your provider's <b>SMTP server</b>, port (usually 465 SSL or 587 TLS), username and password.</li>
-          <li>Gmail sends a confirmation code to that address - enter it.</li>
-          <li><b>Receiving:</b> in your provider's control panel (cPanel → Forwarders, Outlook → Rules → Forward, Zoho → Mail forwarding) forward incoming email to <b>${acct}</b>, keeping a copy if you like.</li>
-          <li>Click <b>Refresh from Gmail</b> here. Send a test email to the address - "last email received" updates within 5 minutes.</li>
-        </ol>
-        <p class="hint">Using your domain's own SMTP improves deliverability: also set SPF/DKIM for your domain as your provider recommends.</p></div>
-      <div class="foot"><button class="btn primary" data-close>Done</button></div>`, {
-      wide: true,
-      onMount: (el) => el.querySelectorAll('#guide-seg button').forEach((b) => (b.onclick = () => {
-        el.querySelectorAll('#guide-seg button').forEach((x) => x.classList.toggle('on', x === b));
-        el.querySelectorAll('[data-pane]').forEach((p) => { p.style.display = p.dataset.pane === b.dataset.tab ? '' : 'none'; });
-      })),
-    });
+  /** How another sending domain or address is added (in AWS, by whoever runs the infrastructure). */
+  function connectGuide(replyDomain) {
+    App.modal(`<div class="row" style="align-items:center;margin-bottom:6px"><h2 style="margin:0;flex:1">Add a sending domain or address</h2><button class="btn icon ghost" data-close>${icon('x', 18)}</button></div>
+      <p class="muted">Email goes out through <b>Amazon SES</b>. Any address at a verified domain can send; a single address can be verified on its own.</p>
+      <ol style="line-height:1.9;padding-left:20px;margin-top:0">
+        <li>In the AWS console, <b>Amazon SES → Identities → Create identity</b>, in the sending region shown on this page. Choose <b>Domain</b> (recommended) with <b>Easy DKIM</b>, or <b>Email address</b>.</li>
+        <li>For a domain, add the three DKIM <code>CNAME</code> records SES shows at the domain's DNS host. SES verifies it within minutes to hours.</li>
+        <li>Come back here and click <b>Refresh from SES</b>. The identity appears as <span class="badge green">Verified</span>.</li>
+      </ol>
+      <p class="hint">Replies to every sender come back through <b>${esc(replyDomain || 'the reply domain')}</b> and are forwarded to the sender's own mailbox, so nothing changes in your mail hosting.</p>
+      <div class="foot"><button class="btn primary" data-close>Done</button></div>`, { wide: true });
   }
 
   App.route(/^#\/settings(?:\?(.*))?$/, async (root, qs) => {
-    const gmailResult = new URLSearchParams(qs || '').get('gmail');
-    if (gmailResult) {
-      history.replaceState(null, '', '#/settings');
-      toast(gmailResult.startsWith('connected') ? `Gmail ${gmailResult}` : `Gmail could not be connected (${gmailResult.replace(/^error: /, '')})`, gmailResult.startsWith('connected') ? 'info' : 'error');
-    }
     const [s, meta] = await Promise.all([api.get('/settings'), App.getMeta(true)]);
-    const gmail = s.gmail || {};
+    const mail = s.mail || {};
+    const sesAcct = mail.account || {};
     const st = s.status || {};
     const admin = !!s.can_edit;
     const remaining = meta.remainingToday ?? s.daily_limit ?? 100;
     const providers = 1 + ['hunter_api_key', 'apollo_api_key', 'google_cse_key'].filter((k) => s[k]).length;
-    const workerBadge = !gmail.connected
-      ? '<span class="badge red lg">Gmail not connected</span>'
+    const workerBadge = !mail.configured
+      ? '<span class="badge red lg">Not set up</span>'
+      : mail.error ? '<span class="badge red lg">SES error</span>'
       : meta.workerOnline ? `<span class="badge green lg"><span class="dot"></span>Synced</span>` : '<span class="badge yellow lg">Idle</span>';
     const senders = s.senders || [];
     const lastSeen = Object.fromEntries((s.inbox || []).map((x) => [x.email, x.last_received_at]));
@@ -91,9 +69,9 @@
 
         <section class="card">
           ${cardHead({ icon: 'mail', title: 'Sender', sub: 'Configure outbound email identity and headers' })}
-          <div class="field">${fieldLabel('Sending account')}
-            <div class="affix"><input type="text" value="${esc(account || 'not connected yet')}" readonly>${account ? '<span class="suffix pill"><span class="badge green"><span class="dot"></span>Verified</span></span>' : ''}</div>
-            <div class="hint">Emails are sent from the Gmail or Google Workspace mailbox connected below. To send from another address, add it in <a href="https://mail.google.com/mail/u/0/#settings/accounts" target="_blank" rel="noopener">Gmail settings → Accounts → "Send mail as"</a> and pick it under <b>Sender identities</b>.</div></div>
+          <div class="field">${fieldLabel('Default sender')}
+            <div class="affix"><input type="text" value="${esc(account || 'not set')}" readonly>${account && mail.configured ? '<span class="suffix pill"><span class="badge green"><span class="dot"></span>SES</span></span>' : ''}</div>
+            <div class="hint">The default From address (below, under <b>Sender identities</b>); campaigns and automations may use any verified sender. Replies come back through ${esc(mail.reply_domain || 'the reply domain')} and are forwarded to the sender's mailbox.</div></div>
           <div class="field">${fieldLabel('From name')}${input('from_name', s.from_name, { placeholder: 'My Company' })}</div>
           <div class="field">${fieldLabel('Reply-to <span class="hint-inline">(optional)</span>')}${input('reply_to', s.reply_to, { type: 'email', placeholder: 'team@company.com' })}</div>
           <div class="field" style="margin-bottom:0">${fieldLabel('Company postal address <span class="hint-inline">(required by CAN-SPAM; shown in footers)</span>')}
@@ -102,7 +80,7 @@
 
         <section class="card">
           ${cardHead({ icon: 'chart', tone: 'violet', title: 'Sending limits', sub: 'Deliverability safety caps and scheduling throttle', aside: `<span class="badge green lg">${remaining} emails left today</span>` })}
-          <div class="field">${fieldLabel('Max emails per day', '<span class="aside chip-hint">free Gmail ≈ 500, Google Workspace ≈ 2,000</span>')}
+          <div class="field">${fieldLabel('Max emails per day', `<span class="aside chip-hint">SES allows ${sesAcct.max_24h ? Math.round(sesAcct.max_24h).toLocaleString() : '…'} / 24h</span>`)}
             ${input('daily_limit', s.daily_limit ?? 100, { type: 'number', suffix: 'recipients / 24h' })}</div>
           <div class="field">${fieldLabel('Max emails per worker run', 'protects your reputation')}
             ${input('per_run_limit', s.per_run_limit ?? 40, { type: 'number', suffix: 'rate limit cap' })}
@@ -113,23 +91,20 @@
         </section>
 
         <section class="card">
-          ${cardHead({ icon: 'server', tone: 'green', title: 'Gmail & worker', sub: 'The mailbox that sends, and the worker that reads its inbox', aside: workerBadge })}
-          <p class="muted" style="margin-top:0">The worker sends queued email through the connected Gmail mailbox, reads replies and bounces from its inbox, runs automations and auto-replies, and finds leads. It runs every few minutes, and straight away after you send or activate something.</p>
-          ${gmail.connected
-            ? `<div class="list-row"><div class="avatar">${esc(initials(gmail.email))}</div>
-                 <div class="grow"><div class="truncate"><b>${esc(gmail.email)}</b></div><div class="muted" style="font-size:13px">Connected${gmail.connected_at ? ` ${fmtDate(gmail.connected_at)}` : ''}${gmail.connected_by ? ` by ${esc(gmail.connected_by)}` : ''}</div></div>
-                 <span class="badge green">Connected</span></div>`
-            : `<div class="banner warn">${gmail.configured
-                ? 'No mailbox is connected, so nothing is sent and replies are not read. An admin connects one below, signed in to that Google account.'
-                : 'The server has no Google OAuth client (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET), so Gmail cannot be connected yet.'}</div>`}
+          ${cardHead({ icon: 'server', tone: 'green', title: 'Amazon SES & worker', sub: 'How email goes out, and the worker that handles what comes back', aside: workerBadge })}
+          <p class="muted" style="margin-top:0">The worker sends queued email through Amazon SES, handles bounces and spam complaints, records replies that reach the reply domain (and forwards them to the sender's mailbox), runs automations and auto-replies, and finds leads. It runs every few minutes, and straight away after you send or activate something.</p>
+          ${mail.configured
+            ? `<div class="status-lines">
+                 <div><span class="dot"></span> <strong>Sending region:</strong> ${esc(mail.region || '')}${sesAcct.production === false ? ' <span class="badge yellow">SES sandbox: only verified recipients</span>' : ''}</div>
+                 <div><span class="dot"></span> <strong>Quota:</strong> ${sesAcct.max_24h != null ? `${Math.round(sesAcct.sent_last_24h || 0).toLocaleString()} of ${Math.round(sesAcct.max_24h).toLocaleString()} sent in the last 24h, ${sesAcct.max_send_rate || 0}/s` : '—'}</div>
+                 <div><span class="dot blue"></span> <strong>Replies to:</strong> ${mail.reply_domain ? `…@${esc(mail.reply_domain)}` : 'not set up (REPLY_DOMAIN)'}</div>
+               </div>${mail.error ? `<div class="banner warn">SES answered: ${esc(mail.error)}</div>` : ''}`
+            : '<div class="banner warn">The server has no Amazon SES configuration (SES_REGION, MAIL_FROM), so nothing is sent. Dry-run mode still records campaigns.</div>'}
           <div class="status-lines">
             <div><span class="dot"></span> <strong>Last run:</strong> ${st.last_tick ? fmtDate(st.last_tick) : 'never'}</div>
-            <div><span class="dot blue"></span> <strong>Last Gmail check:</strong> ${st.last_reply_poll ? fmtDate(st.last_reply_poll) : 'never'}</div>
+            <div><span class="dot blue"></span> <strong>Last reply check:</strong> ${st.last_reply_poll ? fmtDate(st.last_reply_poll) : 'never'}</div>
           </div>
-          <div class="row">
-            ${admin && gmail.configured ? `<button type="button" class="btn ${gmail.connected ? '' : 'primary'}" id="gmail-connect">${icon('mail', 16)}${gmail.connected ? 'Reconnect Gmail' : 'Connect Gmail'}</button>` : ''}
-            ${admin && gmail.connected ? `<button type="button" class="btn ghost danger" id="gmail-disconnect">${icon('logout', 16)}Disconnect</button>` : ''}
-            <button type="button" class="btn" id="check">${icon('check-circle', 17)}Check connection</button><button type="button" class="btn" id="run">${icon('play', 15)}Run worker now</button></div>
+          <div class="row"><button type="button" class="btn" id="check">${icon('check-circle', 17)}Check connection</button><button type="button" class="btn" id="run">${icon('play', 15)}Run worker now</button></div>
         </section>
 
         <section class="card">
@@ -146,23 +121,22 @@
           ${cardHead({ icon: 'at', title: 'Sender identities', sub: 'Send campaigns and automations from different email addresses', aside: `<span class="badge outline lg">${senders.filter((x) => x.verified).length || 1} verified</span>` })}
           <div id="senders">${senders.length ? senders.map((x) => `
             <div class="list-row"><div class="avatar">${esc(initials(x.email))}</div>
-              <div class="grow"><div class="truncate"><b>${esc(x.email)}</b></div><div class="muted" style="font-size:13px">${esc(x.name || '—')} · ${lastSeen[x.email] ? `last email received ${fmtDate(lastSeen[x.email])}` : 'no email received yet'}</div></div>
+              <div class="grow"><div class="truncate"><b>${x.type === 'domain' ? `*@${esc(x.email)}` : esc(x.email)}</b></div><div class="muted" style="font-size:13px">${x.type === 'domain' ? 'Any address at this domain' : 'This address only'}</div></div>
               ${x.primary ? '<span class="badge blue">Primary</span>' : ''}
               ${x.verified ? '<span class="badge green">Verified</span>' : '<span class="badge yellow">Pending verification</span>'}
-            </div>`).join('') : `<p class="muted">No identities loaded yet. Click <b>Refresh from Gmail</b>.</p>`}</div>
+            </div>`).join('') : `<p class="muted">No identities loaded yet. Click <b>Refresh from SES</b>.</p>`}</div>
           <div class="field" style="margin-top:18px">${fieldLabel('Default "From" address')}
-            <select name="default_from_email"><option value="">${esc(account || 'Worker account')} (account)</option>
-              ${senders.filter((x) => x.verified && !x.primary).map((x) => `<option value="${esc(x.email)}" ${s.default_from_email === x.email ? 'selected' : ''}>${esc(x.email)}${x.name ? ` — ${esc(x.name)}` : ''}</option>`).join('')}</select>
-            <div class="hint">Campaigns and automation emails can also pick their own address. Add addresses in Gmail → Settings → Accounts → "Send mail as" (verify them), then refresh${s.senders_updated_at ? ` · last refreshed ${fmtDate(s.senders_updated_at)}` : ''}.</div></div>
-          <div class="row"><button type="button" class="btn primary" id="connect-email">${icon('plus', 16)}Connect an email address</button>
-            <button type="button" class="btn" id="refresh-senders">${icon('refresh', 16)}Refresh from Gmail</button></div>
+            ${input('default_from_email', s.default_from_email, { type: 'email', placeholder: `${mail.default_from || 'hello@yourcompany.com'} (server default)` })}
+            <div class="hint">Campaigns and automation emails can also pick their own address. ${App.sendersHint(s)}${s.senders_updated_at ? ` · last refreshed ${fmtDate(s.senders_updated_at)}` : ''}</div></div>
+          <div class="row"><button type="button" class="btn primary" id="connect-email">${icon('plus', 16)}Add a sending domain</button>
+            <button type="button" class="btn" id="refresh-senders">${icon('refresh', 16)}Refresh from SES</button></div>
         </section>
 
         <section class="card">
           ${cardHead({ icon: 'shield', tone: 'violet', title: 'Access', sub: 'Who can sign in to Emailing' })}
           <p class="muted" style="margin-top:0">Staff sign in with their GrandPine account. Access is granted in the IAM Workspace, on the Emailing app:</p>
           <ul class="muted">
-            <li><b>Admin</b> also manages these settings and the Gmail connection.</li>
+            <li><b>Admin</b> also manages these settings and the integration keys.</li>
             <li><b>Editor</b> works with campaigns, contacts, templates and automations.</li>
             <li><b>Viewer</b> can look but not change anything.</li>
           </ul>
@@ -262,10 +236,10 @@
       toast(`Worker finished: ${JSON.stringify(r.summary || {})}`);
       App.navigate();
     };
-    root.querySelector('#connect-email').onclick = () => connectGuide(account);
+    root.querySelector('#connect-email').onclick = () => connectGuide(mail.reply_domain);
     root.querySelector('#refresh-senders').onclick = async () => {
       const r = await api.post('/senders/refresh');
-      toast(`${r.senders.length} sender identit${r.senders.length === 1 ? 'y' : 'ies'} loaded from Gmail`);
+      toast(`${r.senders.length} sender identit${r.senders.length === 1 ? 'y' : 'ies'} loaded from SES`);
       App.navigate();
     };
     root.querySelector('#wa-test-btn').onclick = async () => {
@@ -279,16 +253,5 @@
       App.navigate();
     });
 
-    // Gmail connection
-    root.querySelector('#gmail-connect')?.addEventListener('click', async () => {
-      const r = await api.post('/gmail/connect');
-      location.assign(r.url);
-    });
-    root.querySelector('#gmail-disconnect')?.addEventListener('click', async () => {
-      if (!(await confirmDialog(`Disconnect ${gmail.email}? Nothing is sent and replies are not read until a mailbox is connected again.`, { okText: 'Disconnect' }))) return;
-      await api.post('/gmail/disconnect');
-      toast('Gmail disconnected');
-      App.navigate();
-    });
   });
 })();

@@ -160,11 +160,7 @@ func (s *Service) SettingsView(ctx context.Context, admin bool) (map[string]any,
 	out["senders_updated_at"] = senders["updated_at"]
 	out["can_edit"] = admin
 	out["site_url"] = s.baseURL
-	g, err := s.GmailStatus(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out["gmail"] = g
+	out["mail"] = s.MailStatus(ctx)
 	for _, k := range SecretKeys {
 		out[k] = ""
 	}

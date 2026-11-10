@@ -192,7 +192,6 @@
     ]);
     const ctx = context(templates, lists, campaigns);
     const findTpl = (prefix) => (templates.find((x) => x.name.toLowerCase().startsWith(prefix.toLowerCase())) || {}).id || '';
-    const senders = (settings.senders || []).filter((x) => x.verified);
 
     let a;
     if (param.startsWith('new')) {
@@ -240,7 +239,7 @@
         case 'send_email':
           return field('Template', `<select data-k="template_id">${opts(templates, s.template_id, '— choose a template —')}</select>`, `<a href="#/templates/new-dragdrop">Design a new template</a>`) +
             `<div class="row">${field('Subject <span class="hint-inline">(blank = template subject)</span>', inp('subject', s.subject))}
-              ${field('From', `<select data-k="from_email"><option value="">Default sender</option>${senders.map((x) => `<option value="${esc(x.email)}" ${s.from_email === x.email ? 'selected' : ''}>${esc(x.email)}</option>`).join('')}</select>`)}</div>
+              ${field('From', `<input type="email" data-k="from_email" value="${esc(s.from_email || '')}" placeholder="Default sender">`, App.sendersHint(settings))}</div>
             <label class="check"><input type="checkbox" data-k="reply_in_thread" ${s.reply_in_thread ? 'checked' : ''}> Send as a reply in the same email thread ("Re: …")</label>`;
         case 'send_whatsapp': {
           const provider = s.provider || '';

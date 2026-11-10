@@ -14,31 +14,35 @@ import (
 
 	"github.com/grandpine-capital/gpc-emailing/internal/app"
 	"github.com/grandpine-capital/gpc-emailing/internal/auth"
-	"github.com/grandpine-capital/gpc-emailing/internal/gmail"
 	"github.com/grandpine-capital/gpc-emailing/internal/httpapi"
+	"github.com/grandpine-capital/gpc-emailing/internal/ses"
 	"github.com/grandpine-capital/gpc-emailing/internal/testdb"
 )
 
-type nopMailbox struct{ sent []string }
+type nopSES struct{ sent []string }
 
-func (m *nopMailbox) Send(_ context.Context, raw []byte, _ string) (string, string, error) {
+func (m *nopSES) Region() string { return "ap-southeast-5" }
+func (m *nopSES) Send(_ context.Context, raw []byte) (string, error) {
 	m.sent = append(m.sent, string(raw))
-	return "g1", "t1", nil
+	return "ses-1", nil
 }
-func (m *nopMailbox) MessageIDHeader(context.Context, string) (string, error) { return "", nil }
-func (m *nopMailbox) List(context.Context, string, int) ([]gmail.Ref, error)  { return nil, nil }
-func (m *nopMailbox) Get(context.Context, string) (*gmail.Message, error)     { return nil, io.EOF }
-func (m *nopMailbox) SendAsList(context.Context) ([]gmail.SendAs, error)      { return nil, nil }
+func (m *nopSES) Remaining(context.Context) (int, error)       { return 100, nil }
+func (m *nopSES) Account(context.Context) (ses.Account, error) { return ses.Account{}, nil }
+func (m *nopSES) Identities(context.Context) ([]ses.Identity, error) {
+	return []ses.Identity{{Email: "grandpine.test", Type: "domain", Verified: true}}, nil
+}
+func (m *nopSES) PollEvents(context.Context, func(ses.Event) error) (int, error)       { return 0, nil }
+func (m *nopSES) PollInbound(context.Context, func(string, []byte) error) (int, error) { return 0, nil }
 
-func server(t *testing.T) (*httptest.Server, *app.Service) {
+func server(t *testing.T) (*httptest.Server, *app.Service, *nopSES) {
 	db, box, key := testdb.New(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := app.New(db, box, key, "https://mail.test", &gmail.OAuth{}, log)
-	svc.MailboxOverride = &nopMailbox{}
+	mail := &nopSES{}
+	svc := app.New(db, box, key, "https://mail.test", mail, app.MailConfig{DefaultFrom: "hello@grandpine.test", ReplyDomain: "reply.grandpine.test"}, log)
 	h := httpapi.New(httpapi.Deps{Service: svc, Staff: auth.DevVerifier{}, AuthMode: "dev", Log: log})
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return srv, svc
+	return srv, svc, mail
 }
 
 func call(t *testing.T, srv *httptest.Server, method, path, token, body string) (int, map[string]any) {
@@ -71,7 +75,7 @@ const (
 )
 
 func TestRolesAndRoutes(t *testing.T) {
-	srv, _ := server(t)
+	srv, _, _ := server(t)
 	if code, _ := call(t, srv, "GET", "/api/meta", "", ""); code != 401 {
 		t.Errorf("no token: %d", code)
 	}
@@ -128,7 +132,7 @@ func TestRolesAndRoutes(t *testing.T) {
 }
 
 func TestPublicRoutes(t *testing.T) {
-	srv, svc := server(t)
+	srv, svc, mb := server(t)
 	noRedirect := *srv.Client()
 	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
@@ -174,7 +178,6 @@ func TestPublicRoutes(t *testing.T) {
 	if _, c := call(t, srv, "GET", "/api/campaigns/"+camp["id"].(string), editor, ""); c["status"] != "sent" {
 		t.Fatalf("campaign status %v", c["status"])
 	}
-	mb := svc.MailboxOverride.(*nopMailbox)
 	raw := mb.sent[len(mb.sent)-1]
 	tok := regexp.MustCompile(`/u1\?t=([a-f0-9]{24})`).FindStringSubmatch(raw)
 	if tok == nil {
