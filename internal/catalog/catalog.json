@@ -1,0 +1,512 @@
+{
+ "countries": [
+  {
+   "code": "MY",
+   "name": "Malaysia",
+   "region": "my-en"
+  },
+  {
+   "code": "SG",
+   "name": "Singapore",
+   "region": "sg-en"
+  },
+  {
+   "code": "ID",
+   "name": "Indonesia",
+   "region": "id-en"
+  },
+  {
+   "code": "TH",
+   "name": "Thailand",
+   "region": "th-en"
+  },
+  {
+   "code": "VN",
+   "name": "Vietnam",
+   "region": "vn-en"
+  },
+  {
+   "code": "PH",
+   "name": "Philippines",
+   "region": "ph-en"
+  },
+  {
+   "code": "CN",
+   "name": "China",
+   "region": "cn-zh"
+  },
+  {
+   "code": "HK",
+   "name": "Hong Kong",
+   "region": "hk-tzh"
+  },
+  {
+   "code": "TW",
+   "name": "Taiwan",
+   "region": "tw-tzh"
+  },
+  {
+   "code": "JP",
+   "name": "Japan",
+   "region": "jp-jp"
+  },
+  {
+   "code": "KR",
+   "name": "South Korea",
+   "region": "kr-kr"
+  },
+  {
+   "code": "IN",
+   "name": "India",
+   "region": "in-en"
+  },
+  {
+   "code": "PK",
+   "name": "Pakistan",
+   "region": "pk-en"
+  },
+  {
+   "code": "BD",
+   "name": "Bangladesh",
+   "region": "wt-wt"
+  },
+  {
+   "code": "LK",
+   "name": "Sri Lanka",
+   "region": "wt-wt"
+  },
+  {
+   "code": "AU",
+   "name": "Australia",
+   "region": "au-en"
+  },
+  {
+   "code": "NZ",
+   "name": "New Zealand",
+   "region": "nz-en"
+  },
+  {
+   "code": "AE",
+   "name": "United Arab Emirates",
+   "region": "xa-en"
+  },
+  {
+   "code": "SA",
+   "name": "Saudi Arabia",
+   "region": "xa-en"
+  },
+  {
+   "code": "QA",
+   "name": "Qatar",
+   "region": "xa-en"
+  },
+  {
+   "code": "TR",
+   "name": "Turkey",
+   "region": "tr-tr"
+  },
+  {
+   "code": "IL",
+   "name": "Israel",
+   "region": "il-en"
+  },
+  {
+   "code": "EG",
+   "name": "Egypt",
+   "region": "xa-en"
+  },
+  {
+   "code": "ZA",
+   "name": "South Africa",
+   "region": "za-en"
+  },
+  {
+   "code": "NG",
+   "name": "Nigeria",
+   "region": "wt-wt"
+  },
+  {
+   "code": "KE",
+   "name": "Kenya",
+   "region": "wt-wt"
+  },
+  {
+   "code": "GB",
+   "name": "United Kingdom",
+   "region": "uk-en"
+  },
+  {
+   "code": "IE",
+   "name": "Ireland",
+   "region": "ie-en"
+  },
+  {
+   "code": "DE",
+   "name": "Germany",
+   "region": "de-de"
+  },
+  {
+   "code": "FR",
+   "name": "France",
+   "region": "fr-fr"
+  },
+  {
+   "code": "ES",
+   "name": "Spain",
+   "region": "es-es"
+  },
+  {
+   "code": "IT",
+   "name": "Italy",
+   "region": "it-it"
+  },
+  {
+   "code": "NL",
+   "name": "Netherlands",
+   "region": "nl-nl"
+  },
+  {
+   "code": "BE",
+   "name": "Belgium",
+   "region": "be-fr"
+  },
+  {
+   "code": "CH",
+   "name": "Switzerland",
+   "region": "ch-de"
+  },
+  {
+   "code": "AT",
+   "name": "Austria",
+   "region": "at-de"
+  },
+  {
+   "code": "SE",
+   "name": "Sweden",
+   "region": "se-sv"
+  },
+  {
+   "code": "NO",
+   "name": "Norway",
+   "region": "no-no"
+  },
+  {
+   "code": "DK",
+   "name": "Denmark",
+   "region": "dk-da"
+  },
+  {
+   "code": "FI",
+   "name": "Finland",
+   "region": "fi-fi"
+  },
+  {
+   "code": "PL",
+   "name": "Poland",
+   "region": "pl-pl"
+  },
+  {
+   "code": "PT",
+   "name": "Portugal",
+   "region": "pt-pt"
+  },
+  {
+   "code": "GR",
+   "name": "Greece",
+   "region": "gr-gr"
+  },
+  {
+   "code": "CZ",
+   "name": "Czech Republic",
+   "region": "cz-cs"
+  },
+  {
+   "code": "RO",
+   "name": "Romania",
+   "region": "ro-ro"
+  },
+  {
+   "code": "HU",
+   "name": "Hungary",
+   "region": "hu-hu"
+  },
+  {
+   "code": "US",
+   "name": "United States",
+   "region": "us-en"
+  },
+  {
+   "code": "CA",
+   "name": "Canada",
+   "region": "ca-en"
+  },
+  {
+   "code": "MX",
+   "name": "Mexico",
+   "region": "mx-es"
+  },
+  {
+   "code": "BR",
+   "name": "Brazil",
+   "region": "br-pt"
+  },
+  {
+   "code": "AR",
+   "name": "Argentina",
+   "region": "ar-es"
+  },
+  {
+   "code": "CL",
+   "name": "Chile",
+   "region": "cl-es"
+  },
+  {
+   "code": "CO",
+   "name": "Colombia",
+   "region": "co-es"
+  },
+  {
+   "code": "PE",
+   "name": "Peru",
+   "region": "pe-es"
+  }
+ ],
+ "focus_industries": [
+  {
+   "name": "Education",
+   "keywords": [
+    "education centre",
+    "private school",
+    "learning centre",
+    "training academy"
+   ]
+  },
+  {
+   "name": "Tuition & Learning Centres",
+   "keywords": [
+    "tuition centre",
+    "enrichment centre",
+    "learning centre for kids"
+   ]
+  },
+  {
+   "name": "Online Courses & E-learning",
+   "keywords": [
+    "online course provider",
+    "e-learning company",
+    "online academy"
+   ]
+  },
+  {
+   "name": "Professional Training Providers",
+   "keywords": [
+    "professional training provider",
+    "HRDF training provider",
+    "corporate training company"
+   ]
+  },
+  {
+   "name": "Early Childhood Education",
+   "keywords": [
+    "kindergarten",
+    "preschool",
+    "childcare centre"
+   ]
+  },
+  {
+   "name": "Language Schools",
+   "keywords": [
+    "language school",
+    "English language centre",
+    "Mandarin learning centre"
+   ]
+  },
+  {
+   "name": "Investment Education",
+   "keywords": [
+    "investment education",
+    "stock market course",
+    "trading academy",
+    "financial literacy course"
+   ]
+  },
+  {
+   "name": "Investment Tools",
+   "keywords": [
+    "investment tools",
+    "stock screener",
+    "trading software",
+    "investment platform"
+   ]
+  },
+  {
+   "name": "Trading & Stock Market Courses",
+   "keywords": [
+    "stock trading course",
+    "forex trading course",
+    "technical analysis course"
+   ]
+  },
+  {
+   "name": "Financial Planning & Wealth Management",
+   "keywords": [
+    "financial planner",
+    "wealth management firm",
+    "licensed financial adviser"
+   ]
+  },
+  {
+   "name": "Fintech",
+   "keywords": [
+    "fintech company",
+    "robo advisor",
+    "digital investment platform"
+   ]
+  },
+  {
+   "name": "Dental Lab",
+   "keywords": [
+    "dental laboratory",
+    "dental lab",
+    "dental technician",
+    "crown and bridge lab"
+   ]
+  },
+  {
+   "name": "Dental Clinics",
+   "keywords": [
+    "dental clinic",
+    "dentist",
+    "dental surgery"
+   ]
+  },
+  {
+   "name": "Orthodontics & Aligners",
+   "keywords": [
+    "orthodontist",
+    "clear aligner provider",
+    "braces clinic"
+   ]
+  },
+  {
+   "name": "Dental Supplies & Equipment",
+   "keywords": [
+    "dental supplies",
+    "dental equipment supplier",
+    "dental materials distributor"
+   ]
+  },
+  {
+   "name": "Numerology Education",
+   "keywords": [
+    "numerology course",
+    "numerology academy",
+    "numerology consultant"
+   ]
+  },
+  {
+   "name": "Metaphysics & Feng Shui",
+   "keywords": [
+    "feng shui consultant",
+    "bazi course",
+    "metaphysics academy"
+   ]
+  },
+  {
+   "name": "Soul & Mind Education",
+   "keywords": [
+    "mindfulness course",
+    "meditation centre",
+    "spiritual wellness academy",
+    "soul healing workshop"
+   ]
+  },
+  {
+   "name": "Holistic Wellness & Healing",
+   "keywords": [
+    "holistic wellness centre",
+    "energy healing course",
+    "reiki training"
+   ]
+  },
+  {
+   "name": "Personal Development Education",
+   "keywords": [
+    "personal development course",
+    "self improvement workshop",
+    "life coaching academy"
+   ]
+  },
+  {
+   "name": "Life & Executive Coaching",
+   "keywords": [
+    "life coach",
+    "executive coaching",
+    "NLP training"
+   ]
+  },
+  {
+   "name": "Human Development & Talent Management",
+   "keywords": [
+    "talent management",
+    "human capital development",
+    "talent development consultancy",
+    "HR consulting"
+   ]
+  },
+  {
+   "name": "Leadership & Corporate Training",
+   "keywords": [
+    "leadership training",
+    "corporate training provider",
+    "soft skills training"
+   ]
+  },
+  {
+   "name": "Psychology & Counselling",
+   "keywords": [
+    "counselling centre",
+    "psychologist practice",
+    "psychometric assessment"
+   ]
+  }
+ ],
+ "triggers": [
+  "email_sent",
+  "email_opened",
+  "link_clicked",
+  "email_received",
+  "reply_received",
+  "bounced",
+  "unsubscribed",
+  "contact_added",
+  "tag_added",
+  "whatsapp_received",
+  "webhook_received",
+  "manual"
+ ],
+ "step_types": [
+  "send_email",
+  "send_whatsapp",
+  "chatdaddy_contact",
+  "wait",
+  "stop_if",
+  "add_tag",
+  "remove_tag",
+  "add_to_list",
+  "remove_from_list",
+  "update_field",
+  "notify",
+  "webhook"
+ ],
+ "stop_conditions": [
+  "replied",
+  "opened",
+  "clicked",
+  "not_opened",
+  "not_clicked",
+  "unsubscribed",
+  "has_tag",
+  "not_has_tag"
+ ]
+}

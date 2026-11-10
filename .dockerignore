@@ -1,0 +1,12 @@
+.git
+.github
+.env
+.env.local
+*.log
+.DS_Store
+bin
+web/node_modules
+web/dist
+web/tsconfig.tsbuildinfo
+docs
+_old

@@ -1,64 +1,275 @@
-# Tests and deploys everything on every push - no Cloud Shell needed.
-# One-time setup: run `bash scripts/setup-auto-deploy.sh` in Cloud Shell (see README → Automatic deployment).
-name: Deploy
+name: Deploy to AWS
+
+# Builds the app image (web app + Go service) and the Flyway image, migrates the
+# database, then rolls the ECS service. Branch staging deploys to the GitHub
+# environment `staging` (https://emailing-staging.grandpine.com; ValueFarm.Infra
+# staging/emailing.tf), branch main to `prod` (https://emailing.grandpine.com;
+# ValueFarm.Infra portal/emailing.tf). `terraform -chdir=staging output
+# emailing_github_config` and `terraform -chdir=portal output emailing_github_config`
+# print each environment's secret and variables.
+#
+# Each stage is its own job so that "Re-run failed jobs" continues from the
+# stage that failed instead of building and migrating again.
 
 on:
   push:
-    branches: [main, 'claude/**']
+    branches: [staging, main]
   workflow_dispatch:
 
 concurrency:
-  group: deploy
+  group: deploy-${{ github.ref_name }}
   cancel-in-progress: false
 
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  IMAGE_TAG: ${{ github.sha }}
+  ENV_TAG: ${{ github.ref_name == 'main' && 'prod' || 'staging' }}
+
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm test
 
-  deploy:
-    needs: test
-    runs-on: ubuntu-latest
+    # The deploy role trusts this environment's name, so a run from any other
+    # branch cannot assume it. Every job that talks to AWS names it.
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'staging' }}
+
     env:
-      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
-      CLASP_SCRIPT_ID: ${{ secrets.CLASP_SCRIPT_ID }}
-      FIREBASE_PROJECT: emailing-portal
+      AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-5' }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}                 # vf-emailing-staging (the Flyway image goes to <it>-migrate)
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Sync shared code
-        run: node scripts/sync-shared.js
-
-      - name: Check deploy secrets
+      # A rerun of an old run would put its older image back over a newer
+      # release, so a rerun only proceeds while its commit is still the head
+      # of the branch. First attempts are already ordered by the concurrency
+      # group. The same check opens every job that changes something.
+      - name: Refuse a rerun of a superseded commit
+        if: github.run_attempt > 1
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          missing=""
-          [ -n "$FIREBASE_SERVICE_ACCOUNT" ] || missing="$missing FIREBASE_SERVICE_ACCOUNT"
-          [ -n "$CLASPRC_JSON" ] || missing="$missing CLASPRC_JSON"
-          [ -n "$CLASP_SCRIPT_ID" ] || missing="$missing CLASP_SCRIPT_ID"
-          if [ -n "$missing" ]; then
-            echo "::warning::Missing secrets:$missing. Run 'bash scripts/setup-auto-deploy.sh' once in Cloud Shell."
+          set -euo pipefail
+          HEAD_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/${GITHUB_REF#refs/}" --jq .object.sha)
+          if [ "$HEAD_SHA" != "$GITHUB_SHA" ]; then
+            echo "::error::${GITHUB_REF_NAME} has moved on to ${HEAD_SHA}; this run is for ${GITHUB_SHA}. Rerun the newer run instead."
+            exit 1
           fi
 
-      - name: Deploy Firebase Hosting + Firestore rules/indexes
-        if: env.FIREBASE_SERVICE_ACCOUNT != ''
-        run: |
-          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
-          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
-          npx -y firebase-tools@latest deploy --only hosting,firestore --project "$FIREBASE_PROJECT" --non-interactive
-          rm -f "$RUNNER_TEMP/sa.json"
+      - uses: actions/checkout@v4
 
-      - name: Push and redeploy the Apps Script worker
-        if: env.CLASPRC_JSON != '' && env.CLASP_SCRIPT_ID != ''
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.ENV_TAG }}
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app
+
+      - name: Build and push migrate image (Flyway + db/migration)
+        uses: docker/build-push-action@v6
+        with:
+          context: db
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}-migrate:${{ env.IMAGE_TAG }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}-migrate:${{ env.ENV_TAG }}
+
+  # RDS is not publicly reachable, so migrations run as a one-off Fargate
+  # task inside the VPC. A failed migration fails the deploy before the
+  # service is touched.
+  migrate:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'staging' }}
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-5' }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}                       # vf-staging-cluster
+      MIGRATE_TASK_FAMILY: ${{ vars.MIGRATE_TASK_FAMILY }}       # vf-emailing-staging-migrate
+      MIGRATE_SUBNETS: ${{ vars.MIGRATE_SUBNETS }}               # comma-separated subnet ids
+      MIGRATE_SECURITY_GROUP: ${{ vars.MIGRATE_SECURITY_GROUP }} # app security group id
+
+    steps:
+      - name: Refuse a rerun of a superseded commit
+        if: github.run_attempt > 1
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
-          node scripts/redeploy-worker.js
-          rm -f ~/.clasprc.json
+          set -euo pipefail
+          HEAD_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/${GITHUB_REF#refs/}" --jq .object.sha)
+          if [ "$HEAD_SHA" != "$GITHUB_SHA" ]; then
+            echo "::error::${GITHUB_REF_NAME} has moved on to ${HEAD_SHA}; this run is for ${GITHUB_SHA}. Rerun the newer run instead."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Register migrate task definition with new image
+        id: migrate-taskdef
+        run: |
+          set -euo pipefail
+          IMAGE="${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}-migrate:${IMAGE_TAG}"
+          aws ecs describe-task-definition --task-definition "$MIGRATE_TASK_FAMILY" \
+            --query taskDefinition --output json > migrate-taskdef.json
+          jq --arg img "$IMAGE" '
+            .containerDefinitions[0].image = $img
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
+          ' migrate-taskdef.json > migrate-taskdef.new.json
+          ARN=$(aws ecs register-task-definition --cli-input-json file://migrate-taskdef.new.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Run database migrations (Flyway on Fargate)
+        run: |
+          set -euo pipefail
+          SUBNETS=$(echo "$MIGRATE_SUBNETS" | tr -d ' ' | sed 's/,/","/g')
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --launch-type FARGATE \
+            --task-definition "${{ steps.migrate-taskdef.outputs.arn }}" \
+            --network-configuration "{\"awsvpcConfiguration\":{\"subnets\":[\"$SUBNETS\"],\"securityGroups\":[\"$MIGRATE_SECURITY_GROUP\"],\"assignPublicIp\":\"ENABLED\"}}" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Migration task: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
+          aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].{stopped:stoppedReason,exit:containers[0].exitCode,reason:containers[0].reason}' --output table
+          EXIT=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          if [ "$EXIT" != "0" ]; then
+            echo "::error::Flyway migration task exited with code $EXIT — see CloudWatch log group /ecs/$MIGRATE_TASK_FAMILY"
+            exit 1
+          fi
+
+  deploy:
+    needs: migrate
+    runs-on: ubuntu-latest
+
+    environment:
+      name: ${{ github.ref_name == 'main' && 'prod' || 'staging' }}
+      url: https://${{ vars.APP_HOSTNAME }}
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-5' }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}                       # vf-emailing
+
+    steps:
+      - name: Refuse a rerun of a superseded commit
+        if: github.run_attempt > 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          HEAD_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/${GITHUB_REF#refs/}" --jq .object.sha)
+          if [ "$HEAD_SHA" != "$GITHUB_SHA" ]; then
+            echo "::error::${GITHUB_REF_NAME} has moved on to ${HEAD_SHA}; this run is for ${GITHUB_SHA}. Rerun the newer run instead."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # The base is the family's newest revision, not the one the service runs:
+      # Terraform owns everything but the image, and a revision it registers
+      # (a new env var or secret) is newer than any earlier release.
+      - name: Fetch base app task definition
+        run: |
+          set -euo pipefail
+          RUNNING=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].taskDefinition' --output text)
+          FAMILY="${RUNNING##*/}"; FAMILY="${FAMILY%:*}"
+          aws ecs describe-task-definition --task-definition "$FAMILY" \
+            --query taskDefinition --output json > app-taskdef.json
+
+      - name: Render app task definition with new image
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: app-taskdef.json
+          container-name: app
+          image: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+
+      - name: Deploy app service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+          wait-for-minutes: 15
+
+  smoke:
+    needs: deploy
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'staging' }}
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-5' }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      APP_HOSTNAME: ${{ vars.APP_HOSTNAME }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # The service starts at desired count 0 (raised by hand after the first
+      # release), and there is nothing to check until then.
+      - name: Smoke check /readyz
+        run: |
+          set -euo pipefail
+          DESIRED=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].desiredCount' --output text)
+          if [ "$DESIRED" = "0" ]; then
+            echo "::notice::Desired count is 0 — image released, nothing running to check."
+            exit 0
+          fi
+          for _ in $(seq 1 12); do
+            if curl -fsS "https://${APP_HOSTNAME}/readyz" >/dev/null; then
+              echo "Ready: https://${APP_HOSTNAME}"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::https://${APP_HOSTNAME}/readyz did not answer 200"
+          exit 1

@@ -1,0 +1,45 @@
+name: CI
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: gpc_emailing
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci" --health-interval 2s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Flyway migrate (proves the migrations apply cleanly with Flyway itself)
+        run: |
+          docker run --rm --network host \
+            -v "$PWD/db/migration:/flyway/sql:ro" -v "$PWD/db/flyway.conf:/flyway/conf/flyway.conf:ro" \
+            flyway/flyway:11 -configFiles=/flyway/conf/flyway.conf -locations=filesystem:/flyway/sql \
+            -url=jdbc:postgresql://localhost:5432/gpc_emailing -user=ci -password=ci migrate
+      - run: go vet ./...
+      - name: Test
+        env:
+          TEST_DATABASE_URL: postgres://ci:ci@localhost:5432/postgres?sslmode=disable
+        run: go test -count=1 -race ./...
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Dashboard shared JS, and the server's catalogue copy is up to date
+        run: node --test "test/**/*.test.js"

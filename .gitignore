@@ -1,6 +1,7 @@
 node_modules/
 .env
-.firebase/
 *.log
-apps-script/.clasp.json
-test/e2e/.cache/
+/bin/
+# The dashboard is copied here at build time (make web, Dockerfile) and embedded in the binary.
+/internal/ui/dist/*
+!/internal/ui/dist/.gitkeep

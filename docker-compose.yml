@@ -1,0 +1,41 @@
+# Local stack: Postgres, Flyway migrations, then the service (API + dashboard + worker).
+#   cp .env.example .env   # fill in SETTINGS_ENCRYPTION_KEY
+#   docker compose up --build
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: gpc_emailing
+      POSTGRES_USER: emailing
+      POSTGRES_PASSWORD: emailing
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U emailing -d gpc_emailing"]
+      interval: 2s
+      retries: 30
+
+  flyway:
+    image: flyway/flyway:11
+    command: -configFiles=/flyway/conf/flyway.conf -locations=filesystem:/flyway/sql migrate
+    environment:
+      FLYWAY_URL: jdbc:postgresql://db:5432/gpc_emailing
+      FLYWAY_USER: emailing
+      FLYWAY_PASSWORD: emailing
+    volumes:
+      - ./db/migration:/flyway/sql:ro
+      - ./db/flyway.conf:/flyway/conf/flyway.conf:ro
+    depends_on:
+      db: { condition: service_healthy }
+
+  emailing:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://emailing:emailing@db:5432/gpc_emailing?sslmode=disable
+    ports: ["8080:8080"]
+    depends_on:
+      flyway: { condition: service_completed_successfully }
+
+volumes:
+  pgdata:

@@ -1,16 +1,10 @@
 {
-  "name": "emailing-portal",
-  "version": "2.0.0",
-  "description": "Zero-cost email marketing system on Google: Firebase Hosting + Auth + Firestore, with a Google Apps Script worker (Gmail sending, reply detection, automations, lead finder).",
+  "name": "gpc-emailing-web",
   "private": true,
+  "description": "Tests for the dashboard's shared JavaScript (web/shared). The service itself is Go: see README.",
   "scripts": {
-    "sync": "node scripts/sync-shared.js",
     "test": "node --test \"test/**/*.test.js\"",
-    "test:e2e": "node test/e2e/run.js",
-    "emulators": "npx -y firebase-tools@latest emulators:start --only auth,firestore,hosting",
-    "deploy:firebase": "npx -y firebase-tools@latest deploy --only hosting,firestore",
-    "deploy": "npm run sync && npm run deploy:firebase && npm run deploy:worker",
-    "deploy:worker": "node scripts/sync-shared.js && node scripts/redeploy-worker.js"
+    "catalog": "node scripts/gen-catalog.js"
   },
   "engines": {
     "node": ">=20"
