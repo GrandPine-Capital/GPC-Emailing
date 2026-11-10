@@ -9,181 +9,137 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/grandpine-capital/gpc-emailing/internal/gmail"
+	"github.com/grandpine-capital/gpc-emailing/internal/ses"
 )
 
-// Mailbox is the connected Gmail mailbox (a *gmail.Client, or a fake in tests).
-type Mailbox interface {
-	Send(ctx context.Context, raw []byte, threadID string) (id, thread string, err error)
-	MessageIDHeader(ctx context.Context, id string) (string, error)
-	List(ctx context.Context, query string, max int) ([]gmail.Ref, error)
-	Get(ctx context.Context, id string) (*gmail.Message, error)
-	SendAsList(ctx context.Context) ([]gmail.SendAs, error)
+// Mail is Amazon SES (a *ses.Client, or a fake in tests).
+type Mail interface {
+	Region() string
+	Send(ctx context.Context, raw []byte) (string, error)
+	Remaining(ctx context.Context) (int, error)
+	Account(ctx context.Context) (ses.Account, error)
+	Identities(ctx context.Context) ([]ses.Identity, error)
+	PollEvents(ctx context.Context, fn func(ses.Event) error) (int, error)
+	PollInbound(ctx context.Context, fn func(id string, raw []byte) error) (int, error)
 }
 
-// ErrNoMailbox: nothing can be sent or read until an administrator connects Gmail.
-var ErrNoMailbox = errors.New("Gmail is not connected: an administrator connects it in Settings → Gmail")
-
-// mailbox is the connected mailbox and its address.
-func (s *Service) mailbox(ctx context.Context) (Mailbox, string, error) {
-	if s.MailboxOverride != nil {
-		g, _ := s.sealedDoc(ctx, "gmail")
-		account := g["email"]
-		if account == "" {
-			account = "worker@example.com"
-		}
-		return s.MailboxOverride, account, nil
-	}
-	g, err := s.sealedDoc(ctx, "gmail")
-	if err != nil {
-		return nil, "", err
-	}
-	if g["refresh_token"] == "" || !s.google.Configured() {
-		return nil, "", ErrNoMailbox
-	}
-	s.mbMu.Lock()
-	defer s.mbMu.Unlock()
-	if s.mb == nil || s.mbToken != g["refresh_token"] {
-		s.mb, s.mbToken = s.google.Client(g["refresh_token"]), g["refresh_token"]
-	}
-	return s.mb, g["email"], nil
+// MailConfig is how the service addresses mail.
+type MailConfig struct {
+	// DefaultFrom sends when neither the campaign nor Settings names an address.
+	DefaultFrom string
+	// ReplyDomain receives replies (SES inbound): mail from name@grandpine.com carries
+	// Reply-To name@<ReplyDomain>; replies are recorded and forwarded to name@grandpine.com.
+	ReplyDomain string
 }
 
-// canSend is nil when mail can go out now: dry-run mode, or a connected mailbox. Queued mail
-// waits (rather than failing) while Gmail is not connected.
+// ErrNoMailer: sending is not set up on the server.
+var ErrNoMailer = errors.New("sending is not set up on the server (SES_REGION, MAIL_FROM)")
+
+// canSend is nil when mail can go out now: dry-run mode, or SES configured. Queued mail waits
+// (rather than failing) otherwise.
 func (s *Service) canSend(ctx context.Context) error {
-	if s.Settings(ctx).DryRun {
+	if s.Settings(ctx).DryRun || s.mail != nil {
 		return nil
 	}
-	_, _, err := s.mailbox(ctx)
-	return err
+	return ErrNoMailer
 }
 
-// Account is the connected mailbox's address ("" when not connected).
+// Account is the default sending address.
 func (s *Service) Account(ctx context.Context) string {
-	_, account, err := s.mailbox(ctx)
-	if err != nil {
+	if a := strings.ToLower(strings.TrimSpace(s.Settings(ctx).DefaultFromEmail)); a != "" {
+		return a
+	}
+	return s.mailCfg.DefaultFrom
+}
+
+func domainOf(addr string) string {
+	_, d, _ := strings.Cut(addr, "@")
+	return strings.ToLower(d)
+}
+
+func localOf(addr string) string {
+	l, _, _ := strings.Cut(addr, "@")
+	return strings.ToLower(l)
+}
+
+// replyAddress is where replies to mail from `from` go: the same name on the reply domain.
+func (s *Service) replyAddress(from string) string {
+	if s.mailCfg.ReplyDomain == "" || from == "" {
 		return ""
 	}
-	return account
+	return localOf(from) + "@" + s.mailCfg.ReplyDomain
 }
 
-// GmailStatus is shown in Settings.
-func (s *Service) GmailStatus(ctx context.Context) (map[string]any, error) {
-	g, err := s.sealedDoc(ctx, "gmail")
-	if err != nil {
-		return nil, err
+// mapReply turns a reply-domain address back into the sending address it stands for.
+func (s *Service) mapReply(ctx context.Context, addr string) string {
+	if s.mailCfg.ReplyDomain != "" && domainOf(addr) == s.mailCfg.ReplyDomain {
+		return localOf(addr) + "@" + domainOf(s.Account(ctx))
 	}
-	return map[string]any{
-		"configured":   s.google.Configured(),
-		"connected":    g["refresh_token"] != "",
-		"email":        g["email"],
-		"connected_at": g["connected_at"],
-		"connected_by": g["connected_by"],
-	}, nil
+	return addr
 }
 
-// GmailConnectURL starts the consent flow. The state is signed and expires, so the callback
-// (which carries no sign-in) only accepts a flow an administrator started here.
-func (s *Service) GmailConnectURL(by string) (string, error) {
-	if !s.google.Configured() {
-		return "", userErr("No Google OAuth client is set up on the server (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET).")
+// MailStatus is shown in Settings.
+func (s *Service) MailStatus(ctx context.Context) map[string]any {
+	out := map[string]any{"configured": s.mail != nil, "default_from": s.Account(ctx), "reply_domain": s.mailCfg.ReplyDomain}
+	if s.mail == nil {
+		return out
 	}
-	exp := strconv.FormatInt(s.now().Add(15*time.Minute).Unix(), 10)
-	payload := base64.RawURLEncoding.EncodeToString([]byte(exp + "|" + by))
-	return s.google.AuthURL(payload+"."+s.sign("gmail-state:"+payload), ""), nil
-}
-
-// GmailCallback finishes the consent flow and stores the mailbox's refresh token.
-func (s *Service) GmailCallback(ctx context.Context, code, state string) (string, error) {
-	payload, sig, ok := strings.Cut(state, ".")
-	if !ok || sig != s.sign("gmail-state:"+payload) {
-		return "", userErr("This Gmail connection link is invalid. Start again from Settings.")
+	out["region"] = s.mail.Region()
+	if a, err := s.mail.Account(ctx); err != nil {
+		out["error"] = err.Error()
+	} else {
+		out["account"] = a
 	}
-	raw, _ := base64.RawURLEncoding.DecodeString(payload)
-	exp, by, _ := strings.Cut(string(raw), "|")
-	if n, _ := strconv.ParseInt(exp, 10, 64); s.now().Unix() > n {
-		return "", userErr("This Gmail connection link has expired. Start again from Settings.")
-	}
-	client, refresh, err := s.google.Exchange(ctx, code)
-	if err != nil {
-		return "", err
-	}
-	email, err := client.Profile(ctx)
-	if err != nil {
-		return "", err
-	}
-	if err := s.writeSealed(ctx, "gmail", map[string]string{
-		"refresh_token": refresh, "email": email, "connected_at": s.now().Format(time.RFC3339), "connected_by": by,
-	}); err != nil {
-		return "", err
-	}
-	s.log.Info("gmail connected", "mailbox", email, "by", by)
-	if _, err := s.RefreshSenders(ctx); err != nil {
-		s.log.Warn("could not read Send mail as addresses", "err", err)
-	}
-	s.Wake()
-	return email, nil
-}
-
-// DisconnectGmail forgets the mailbox; sending and inbox reading stop.
-func (s *Service) DisconnectGmail(ctx context.Context) error {
-	_, err := s.db.Pool.Exec(ctx, `DELETE FROM settings WHERE name = 'gmail'`)
-	return err
+	return out
 }
 
 // ---------------------------------------------------------------- sender identities
 
-// RefreshSenders reads the mailbox's "Send mail as" addresses into settings/senders.
-func (s *Service) RefreshSenders(ctx context.Context) ([]gmail.SendAs, error) {
-	mb, _, err := s.mailbox(ctx)
+// RefreshSenders reads the verified SES identities into settings/senders.
+func (s *Service) RefreshSenders(ctx context.Context) ([]ses.Identity, error) {
+	if s.mail == nil {
+		return nil, ErrNoMailer
+	}
+	list, err := s.mail.Identities(ctx)
 	if err != nil {
 		return nil, err
 	}
-	list, err := mb.SendAsList(ctx)
-	if err != nil {
-		return nil, err
+	if list == nil {
+		list = []ses.Identity{}
 	}
 	return list, s.mergeDoc(ctx, s.db.Pool, "senders", map[string]any{"list": list, "updated_at": s.now().Format(time.RFC3339)})
 }
 
-// allowedSenders are the verified addresses the mailbox may send as (the account itself first).
-func (s *Service) allowedSenders(ctx context.Context, account string) (emails []string, names map[string]string) {
-	emails = []string{strings.ToLower(account)}
-	names = map[string]string{}
+// senderAllowed: a verified address identity, or any address at a verified domain.
+func (s *Service) senderAllowed(ctx context.Context, addr string) bool {
 	doc := s.doc(ctx, "senders")
 	list, _ := doc["list"].([]any)
-	for _, v := range list {
-		m, _ := v.(map[string]any)
-		e := strings.ToLower(str(m["email"]))
-		names[e] = str(m["name"])
-		if truthy(m["verified"]) && e != "" && !contains(emails, e) {
-			emails = append(emails, e)
+	if len(list) == 0 && s.mail != nil {
+		if _, err := s.RefreshSenders(ctx); err == nil {
+			doc = s.doc(ctx, "senders")
+			list, _ = doc["list"].([]any)
 		}
 	}
-	return emails, names
+	for _, v := range list {
+		m, _ := v.(map[string]any)
+		id := strings.ToLower(str(m["email"]))
+		if truthy(m["verified"]) && (id == addr || id == domainOf(addr)) {
+			return true
+		}
+	}
+	return false
 }
 
-// resolveFrom picks the From address: the account, or one of its verified Send-mail-as
-// addresses. Anything else is refused (Gmail would rewrite or reject it).
-func (s *Service) resolveFrom(ctx context.Context, account, requested string) (email, name string, err error) {
-	account = strings.ToLower(account)
-	want := strings.ToLower(strings.TrimSpace(requested))
-	if want == "" || want == account {
-		return account, "", nil
-	}
-	emails, names := s.allowedSenders(ctx, account)
-	if !contains(emails, want) {
-		return "", "", fmt.Errorf("%s is not a verified \"Send mail as\" address of %s (Settings → Sender identities)", want, account)
-	}
-	return want, names[want], nil
+// ourAddress says whether addr is one of ours (a sender, or a reply-domain address).
+func (s *Service) ourAddress(ctx context.Context, addr string) bool {
+	return addr != "" && ((s.mailCfg.ReplyDomain != "" && domainOf(addr) == s.mailCfg.ReplyDomain) || addr == s.Account(ctx) || s.senderAllowed(ctx, addr))
 }
 
-// RemainingToday is how many more e-mails the daily limit allows today (UTC day).
+// RemainingToday is how many more e-mails today allows: the daily limit (UTC day), and what
+// SES still allows in its rolling 24 hours.
 func (s *Service) RemainingToday(ctx context.Context) int {
 	limit := s.Settings(ctx).DailyLimit
 	if limit <= 0 {
@@ -191,7 +147,13 @@ func (s *Service) RemainingToday(ctx context.Context) int {
 	}
 	var sent int
 	_ = s.db.Pool.QueryRow(ctx, `SELECT coalesce((SELECT sent FROM daily_stats WHERE day = $1), 0)`, dayKey(s.now())).Scan(&sent)
-	return max(0, limit-sent)
+	left := max(0, limit-sent)
+	if s.mail != nil {
+		if q, err := s.mail.Remaining(ctx); err == nil {
+			left = min(left, q)
+		}
+	}
+	return left
 }
 
 // ---------------------------------------------------------------- sending
@@ -201,37 +163,39 @@ type Outgoing struct {
 	To, ToName, Subject, HTML, Text string
 	FromName, FromEmail, ReplyTo    string
 	Headers                         map[string]string
-	ThreadID, InReplyTo             string
-	// Force sends even in dry-run mode (test e-mails and team notifications).
+	InReplyTo                       string
+	// Attachment, when set, goes as message/rfc822 (forwarded replies).
+	Attachment []byte
+	// Force sends even in dry-run mode (test e-mails, team notifications, forwards).
 	Force bool
 }
 
-// SendResult is what Gmail answered.
+// SendResult is what SES answered.
 type SendResult struct {
-	ID, ThreadID string
+	ID           string // SES message id
+	RFCMessageID string // the Message-ID header the recipient sees
 	DryRun       bool
 }
 
-// Send sends through the connected mailbox (Mailer.send in Mailer.js).
+// Send sends through SES. From must be a verified identity; Reply-To defaults to the reply
+// domain, so replies come back to the app.
 func (s *Service) Send(ctx context.Context, m Outgoing) (SendResult, error) {
 	st := s.Settings(ctx)
 	if st.DryRun && !m.Force {
-		return SendResult{ID: "dry-" + randomHex(12), ThreadID: "dry-" + randomHex(12), DryRun: true}, nil
+		return SendResult{ID: "dry-" + randomHex(12), DryRun: true}, nil
 	}
-	mb, account, err := s.mailbox(ctx)
-	if err != nil {
-		return SendResult{}, err
+	if s.mail == nil {
+		return SendResult{}, ErrNoMailer
+	}
+	m.FromEmail = strings.ToLower(strings.TrimSpace(m.FromEmail))
+	if m.FromEmail == "" {
+		m.FromEmail = s.Account(ctx)
 	}
 	if m.FromEmail == "" {
-		m.FromEmail = st.DefaultFromEmail
+		return SendResult{}, ErrNoMailer
 	}
-	from, aliasName, err := s.resolveFrom(ctx, account, m.FromEmail)
-	if err != nil {
-		return SendResult{}, err
-	}
-	m.FromEmail = from
-	if m.FromName == "" {
-		m.FromName = aliasName
+	if !s.senderAllowed(ctx, m.FromEmail) {
+		return SendResult{}, fmt.Errorf("%s is not a verified SES sender (Settings → Sender identities)", m.FromEmail)
 	}
 	if m.FromName == "" {
 		m.FromName = st.FromName
@@ -239,11 +203,14 @@ func (s *Service) Send(ctx context.Context, m Outgoing) (SendResult, error) {
 	if m.ReplyTo == "" {
 		m.ReplyTo = st.ReplyTo
 	}
-	id, thread, err := mb.Send(ctx, BuildMIME(m), m.ThreadID)
+	if m.ReplyTo == "" {
+		m.ReplyTo = s.replyAddress(m.FromEmail)
+	}
+	id, err := s.mail.Send(ctx, BuildMIME(m))
 	if err != nil {
 		return SendResult{}, err
 	}
-	return SendResult{ID: id, ThreadID: thread}, nil
+	return SendResult{ID: id, RFCMessageID: ses.RFCMessageID(s.mail.Region(), id)}, nil
 }
 
 var printable = regexp.MustCompile(`^[\x20-\x7e]*$`)
@@ -261,34 +228,36 @@ func address(name, email string) string {
 	}
 	n := encodeWord(name)
 	if printable.MatchString(name) {
-		n = `"` + strings.ReplaceAll(name, `"`, "'") + `"`
+		n = `"` + strings.NewReplacer(`"`, "'", `\`, "").Replace(name) + `"`
 	}
 	return n + " <" + email + ">"
 }
 
-func b64Lines(s string) string {
-	enc := base64.StdEncoding.EncodeToString([]byte(s))
-	var b strings.Builder
+func b64Lines(b []byte) string {
+	enc := base64.StdEncoding.EncodeToString(b)
+	var out strings.Builder
 	for len(enc) > 76 {
-		b.WriteString(enc[:76] + "\r\n")
+		out.WriteString(enc[:76] + "\r\n")
 		enc = enc[76:]
 	}
-	b.WriteString(enc)
-	return b.String()
+	out.WriteString(enc)
+	return out.String()
 }
 
 // headerSafe drops CR and LF, so no value can start a header of its own.
 func headerSafe(s string) string { return strings.NewReplacer("\r", " ", "\n", " ").Replace(s) }
 
-// BuildMIME builds the RFC 2822 multipart/alternative message (buildMime in Mailer.js).
+// BuildMIME builds the RFC 5322 message: multipart/alternative, inside multipart/mixed when
+// there is an attachment.
 func BuildMIME(m Outgoing) []byte {
-	boundary := "b_" + randomHex(12)
+	alt := "a_" + randomHex(12)
 	var b bytes.Buffer
 	h := func(k, v string) { b.WriteString(k + ": " + headerSafe(v) + "\r\n") }
 	h("MIME-Version", "1.0")
 	h("From", address(m.FromName, m.FromEmail))
 	h("To", address(m.ToName, m.To))
 	h("Subject", encodeWord(m.Subject))
+	h("Date", time.Now().UTC().Format(time.RFC1123Z))
 	if m.ReplyTo != "" {
 		h("Reply-To", m.ReplyTo)
 	}
@@ -304,15 +273,28 @@ func BuildMIME(m Outgoing) []byte {
 	for _, k := range keys {
 		h(k, m.Headers[k])
 	}
-	h("Content-Type", `multipart/alternative; boundary="`+boundary+`"`)
-	b.WriteString("\r\n")
-	if m.Text != "" {
-		b.WriteString("--" + boundary + "\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" + b64Lines(m.Text) + "\r\n")
+	altPart := func() {
+		if m.Text != "" {
+			b.WriteString("--" + alt + "\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" + b64Lines([]byte(m.Text)) + "\r\n")
+		}
+		if m.HTML != "" {
+			b.WriteString("--" + alt + "\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" + b64Lines([]byte(m.HTML)) + "\r\n")
+		}
+		b.WriteString("--" + alt + "--")
 	}
-	if m.HTML != "" {
-		b.WriteString("--" + boundary + "\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" + b64Lines(m.HTML) + "\r\n")
+	if len(m.Attachment) == 0 {
+		h("Content-Type", `multipart/alternative; boundary="`+alt+`"`)
+		b.WriteString("\r\n")
+		altPart()
+		return b.Bytes()
 	}
-	b.WriteString("--" + boundary + "--")
+	mixed := "m_" + randomHex(12)
+	h("Content-Type", `multipart/mixed; boundary="`+mixed+`"`)
+	b.WriteString("\r\n--" + mixed + "\r\nContent-Type: multipart/alternative; boundary=\"" + alt + "\"\r\n\r\n")
+	altPart()
+	b.WriteString("\r\n--" + mixed + "\r\nContent-Type: message/rfc822\r\nContent-Disposition: attachment; filename=\"original.eml\"\r\n\r\n")
+	b.Write(m.Attachment)
+	b.WriteString("\r\n--" + mixed + "--")
 	return b.Bytes()
 }
 

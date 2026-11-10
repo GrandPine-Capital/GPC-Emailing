@@ -50,7 +50,6 @@
     ]);
     const tname = Object.fromEntries(templates.map((t) => [t.id, t.name]));
     const ctx = { templateName: (id) => tname[id] };
-    const identities = (settings.senders || []).filter((x) => x.verified);
     const lastSeen = Object.fromEntries((settings.inbox || []).map((x) => [x.email, x.last_received_at]));
     root.innerHTML = `
       ${App.pageHead({
@@ -61,12 +60,12 @@
       ${App.banners.worker(meta)}
       <div class="grid cols-2" style="margin-bottom:24px">
         <section class="card">
-          ${App.cardHead({ icon: 'at', title: 'Connected addresses', sub: 'Emails to these addresses reach your inbox and can be auto-replied' })}
-          ${identities.length ? identities.map((x) => `<div class="list-row"><div class="avatar">${esc(x.email[0].toUpperCase())}</div>
-            <div class="grow"><b class="truncate" style="display:block">${esc(x.email)}</b><span class="muted" style="font-size:13px">${lastSeen[x.email] ? `Last email received ${fmtDate(lastSeen[x.email])}` : 'No email received yet'}</span></div>
-            ${x.primary ? '<span class="badge blue">Main inbox</span>' : '<span class="badge green">Connected</span>'}</div>`).join('')
-            : `<p class="muted">Connect Gmail first (Settings).</p>`}
-          <a class="btn" href="#/settings" style="margin-top:14px">${icon('plus', 16)}Connect another email address</a>
+          ${App.cardHead({ icon: 'at', title: 'Where incoming email comes from', sub: 'Mail that reaches the reply domain can be auto-replied' })}
+          ${meta.replyDomain
+            ? `<p class="muted" style="margin-top:0">Every email you send carries a reply address on <b>${esc(meta.replyDomain)}</b> (sales@… for sales@…). Replies arrive here, are matched, auto-replied by your rules and forwarded to the real mailbox. To auto-reply to a mailbox that receives mail elsewhere, have it forward a copy to <b>name@${esc(meta.replyDomain)}</b>.</p>
+               ${Object.keys(lastSeen).length ? Object.entries(lastSeen).map(([email, at]) => `<div class="list-row"><div class="avatar">${esc(email[0].toUpperCase())}</div>
+                 <div class="grow"><b class="truncate" style="display:block">${esc(email)}</b><span class="muted" style="font-size:13px">Last email received ${fmtDate(at)}</span></div></div>`).join('') : '<p class="muted">No email received yet.</p>'}`
+            : '<p class="muted">Receiving is not set up on the server (REPLY_DOMAIN), so no email arrives for auto-replies.</p>'}
         </section>
         <section class="card">
           ${App.cardHead({ icon: 'sparkles', tone: 'violet', title: 'Quick start', sub: 'One click creates the rule and its reply template' })}
@@ -114,7 +113,6 @@
         create_contact: true, list_id: '', tags: '', notify_email: '' }
       : await api.get(`/autoreplies/${id}`);
     const sch = r.schedule || {};
-    const identities = (settings.senders || []).filter((x) => x.verified);
     const sel = (name, options, value) => `<select name="${name}">${options.map(([v, l]) => `<option value="${esc(v)}" ${String(value ?? '') === String(v) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
     const autoTemplates = templates.filter((t) => t.category === 'auto-reply');
     const otherTemplates = templates.filter((t) => t.category !== 'auto-reply');
@@ -130,7 +128,7 @@
           ${App.cardHead({ icon: 'filter', title: 'Which emails', sub: 'Choose the emails this rule answers' })}
           <div class="field">${App.fieldLabel('Rule name')}<input type="text" name="name" value="${esc(r.name)}" placeholder="e.g. Thanks for contacting us"></div>
           <label class="check"><input type="checkbox" name="enabled" ${r.enabled ? 'checked' : ''}> Rule is on</label>
-          <div class="field" style="margin-top:12px">${App.fieldLabel('Sent to')}${sel('to_address', [['', 'Any of my addresses'], ...identities.map((x) => [x.email, x.email])], r.to_address)}</div>
+          <div class="field" style="margin-top:12px">${App.fieldLabel('Sent to', 'blank = any address')}<input type="email" name="to_address" value="${esc(r.to_address || '')}" placeholder="Any of my addresses, e.g. sales@…"></div>
           <div class="field">${App.fieldLabel('From')}${sel('audience', [['all', 'Everyone'], ['new', 'New senders only (not yet a contact)'], ['contacts', 'Existing contacts only']], r.audience)}</div>
           <div class="field">${App.fieldLabel('Only if the subject or message contains', 'optional')}<input type="text" name="keywords" value="${esc(r.keywords)}" placeholder="course, price, fee">
             <div class="hint">Comma separated - any one matches. Leave empty to answer every email.</div></div>
@@ -147,7 +145,7 @@
             <div class="hint">Merge tags like <code>{{first_name|there}}</code> use the sender's name.</div></div>
           <label class="check"><input type="checkbox" name="keep_thread" ${r.keep_thread !== false ? 'checked' : ''}> Reply in the same conversation ("Re: their subject")</label>
           <div class="field" style="margin-top:12px">${App.fieldLabel('Send from')}${sel('from_mode', [['recipient', 'The address they wrote to (recommended)'], ['default', 'My default sender'], ['custom', 'A specific address…']], r.from_mode)}</div>
-          <div class="field" id="from-custom" style="${r.from_mode === 'custom' ? '' : 'display:none'}">${sel('from_email', identities.map((x) => [x.email, x.email]), r.from_email)}</div>
+          <div class="field" id="from-custom" style="${r.from_mode === 'custom' ? '' : 'display:none'}"><input type="email" name="from_email" value="${esc(r.from_email || '')}" placeholder="name@…"><div class="hint">${App.sendersHint(settings)}</div></div>
           <div class="field" style="margin-bottom:0">${App.fieldLabel('Reply to the same person at most once every')}
             <div class="affix"><input type="number" name="cooldown_hours" min="1" value="${esc(r.cooldown_hours || 24)}"><span class="suffix">hours</span></div></div>
         </section>

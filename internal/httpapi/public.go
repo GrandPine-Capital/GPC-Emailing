@@ -161,23 +161,6 @@ func (s *Server) public(mux *http.ServeMux) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		_, _ = w.Write(data)
 	})
-
-	// Google sends the administrator back here after the Gmail consent screen.
-	mux.HandleFunc("GET /oauth/google/callback", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		if e := q.Get("error"); e != "" {
-			http.Redirect(w, r, "/#/settings?gmail="+template.URLQueryEscaper("error: "+e), http.StatusFound)
-			return
-		}
-		ctx := r.Context()
-		email, err := svc.GmailCallback(ctx, q.Get("code"), q.Get("state"))
-		if err != nil {
-			s.log.ErrorContext(ctx, "gmail connect", "err", err)
-			http.Redirect(w, r, "/#/settings?gmail="+template.URLQueryEscaper("error: "+err.Error()), http.StatusFound)
-			return
-		}
-		http.Redirect(w, r, "/#/settings?gmail="+template.URLQueryEscaper("connected: "+email), http.StatusFound)
-	})
 }
 
 func parseForm(raw []byte) (map[string]string, error) {

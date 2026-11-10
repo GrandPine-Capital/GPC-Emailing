@@ -2,36 +2,38 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/grandpine-capital/gpc-emailing/internal/core"
-	"github.com/grandpine-capital/gpc-emailing/internal/gmail"
 	"github.com/grandpine-capital/gpc-emailing/internal/ids"
+	"github.com/grandpine-capital/gpc-emailing/internal/ses"
 	"github.com/grandpine-capital/gpc-emailing/internal/store"
 )
 
 // IncomingReply is a reply to record (from the inbox, or logged by hand).
 type IncomingReply struct {
-	ID, ThreadID, From, Subject, Text string
-	Date                              time.Time
+	ID, From, Subject, Text string
+	// References are the Message-IDs the reply names (In-Reply-To, References).
+	References []string
+	Date       time.Time
 }
 
-// RecordReply stores a reply, links it to the message it answers (by Gmail thread, else the
-// contact's latest sent message) and fires reply_received. Nil when the sender is not a
-// contact or the reply was already stored (Replies.record).
+// RecordReply stores a reply, links it to the message it answers (by the Message-ID it names,
+// else the contact's latest sent message) and fires reply_received. Nil when the sender is not
+// a contact or the reply was already stored (Replies.record).
 func (s *Service) RecordReply(ctx context.Context, r IncomingReply) (map[string]any, error) {
 	fromEmail := core.AddressOf(r.From)
-	if fromEmail == "" || fromEmail == strings.ToLower(s.Account(ctx)) {
+	if fromEmail == "" || s.ourAddress(ctx, fromEmail) {
 		return nil, nil
 	}
 	var msg *Message
-	if r.ThreadID != "" {
-		if m, err := store.Struct[Message](ctx, s.db.Pool, `SELECT * FROM messages WHERE thread_id = $1 ORDER BY sent_at DESC NULLS LAST LIMIT 1`, r.ThreadID); err == nil {
+	if len(r.References) > 0 {
+		if m, err := store.Struct[Message](ctx, s.db.Pool, `SELECT * FROM messages WHERE rfc_message_id = ANY($1) ORDER BY sent_at DESC NULLS LAST LIMIT 1`, r.References); err == nil {
 			msg = &m
 		}
 	}
@@ -126,7 +128,6 @@ var (
 	bounceRe1    = regexp.MustCompile(`(?i)Final-Recipient:\s*rfc822;\s*([^\s]+)`)
 	bounceRe2    = regexp.MustCompile(`(?i)(?:wasn't delivered to|couldn't be delivered to|delivery to the following recipient failed[^:]*:)\s*<?([^\s>]+@[^\s>]+)>?`)
 	daemonRe     = regexp.MustCompile(`(?i)mailer-daemon|postmaster`)
-	addrRe       = regexp.MustCompile(`[^\s<>(),;"']+@[^\s<>(),;"']+`)
 )
 
 // handleUnsubscribeRequest: the List-Unsubscribe mailto ("unsubscribe <token>") or a bare
@@ -143,16 +144,9 @@ func (s *Service) handleUnsubscribeRequest(ctx context.Context, subject, fromEma
 	return false, nil
 }
 
-// handleBounce marks the bounced recipient of a delivery failure report.
-func (s *Service) handleBounce(ctx context.Context, text string) (bool, error) {
-	m := bounceRe1.FindStringSubmatch(text)
-	if m == nil {
-		m = bounceRe2.FindStringSubmatch(text)
-	}
-	if m == nil {
-		return false, nil
-	}
-	key := core.EmailKey(m[1])
+// markBounced marks a recipient bounced, stops their automations and fires bounced.
+func (s *Service) markBounced(ctx context.Context, addr string) (bool, error) {
+	key := core.EmailKey(addr)
 	tag, err := s.db.Pool.Exec(ctx, `UPDATE contacts SET status = 'bounced', bounced_at = $2 WHERE id = $1 AND status <> 'bounced'`, key, s.now())
 	if err != nil || tag.RowsAffected() == 0 {
 		return false, err
@@ -162,12 +156,67 @@ func (s *Service) handleBounce(ctx context.Context, text string) (bool, error) {
 	return true, nil
 }
 
-// recipientsOf lists every address a message was sent to (To, Cc, forwarding headers).
-func recipientsOf(m *gmail.Message) []string {
+// handleBounce reads a delivery failure report that reached the reply domain.
+func (s *Service) handleBounce(ctx context.Context, text string) (bool, error) {
+	m := bounceRe1.FindStringSubmatch(text)
+	if m == nil {
+		m = bounceRe2.FindStringSubmatch(text)
+	}
+	if m == nil {
+		return false, nil
+	}
+	return s.markBounced(ctx, m[1])
+}
+
+// processEvents reads SES bounce and complaint events: a permanent bounce marks the contact
+// bounced; a complaint (marked as spam) unsubscribes them.
+func (s *Service) processEvents(ctx context.Context, hasTime func() bool) (int, error) {
+	if s.mail == nil {
+		return 0, nil
+	}
+	total := 0
+	for hasTime() {
+		n, err := s.mail.PollEvents(ctx, func(ev ses.Event) error {
+			var msg *Message
+			if ev.MessageID != "" {
+				if m, err := store.Struct[Message](ctx, s.db.Pool, `SELECT * FROM messages WHERE provider_id = $1`, ev.MessageID); err == nil {
+					msg = &m
+				}
+			}
+			for _, r := range ev.Recipients {
+				switch {
+				case ev.Type == "Bounce" && ev.Permanent:
+					if _, err := s.markBounced(ctx, r); err != nil {
+						return err
+					}
+					if msg != nil {
+						_, _ = s.db.Pool.Exec(ctx, `UPDATE messages SET error = 'bounced' WHERE id = $1`, msg.ID)
+					}
+				case ev.Type == "Complaint":
+					if _, err := s.UnsubscribeContact(ctx, core.EmailKey(r), msg); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		})
+		total += n
+		if err != nil || n == 0 {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
+var addrRe = regexp.MustCompile(`[^\s<>(),;"']+@[^\s<>(),;"']+`)
+
+// recipientsOf lists every address a message was sent to (To, Cc, forwarding headers), with
+// reply-domain addresses mapped back to the sending addresses they stand for.
+func (s *Service) recipientsOf(ctx context.Context, m *ses.Message) []string {
 	raw := strings.Join([]string{m.Header("To"), m.Header("Cc"), m.Header("Delivered-To"), m.Header("X-Original-To"), m.Header("X-Forwarded-To")}, ",")
 	out := []string{}
 	for _, a := range addrRe.FindAllString(raw, -1) {
-		a = strings.ToLower(a)
+		a = s.mapReply(ctx, strings.ToLower(a))
 		if !contains(out, a) {
 			out = append(out, a)
 		}
@@ -175,58 +224,52 @@ func recipientsOf(m *gmail.Message) []string {
 	return out
 }
 
-// pollInbox reads recent inbox mail: bounces, unsubscribe requests, replies from contacts,
-// auto-reply rules and the email_received trigger. Each Gmail message is handled once (the
-// inbound table) (Replies.poll).
-func (s *Service) pollInbox(ctx context.Context, hasTime func() bool) (int, error) {
-	mb, account, err := s.mailbox(ctx)
-	if err != nil {
-		return 0, err
-	}
-	status := s.doc(ctx, "status")
-	last, _ := strconv.ParseInt(str(status["last_poll_ms"]), 10, 64)
-	if last == 0 {
-		last = s.now().Add(-48 * time.Hour).UnixMilli()
-	}
-	started := s.now()
-	since := (last - 10*60*1000) / 1000 // overlap; duplicates are ignored
-	mine, _ := s.allowedSenders(ctx, account)
-	refs, err := mb.List(ctx, "in:inbox after:"+strconv.FormatInt(since, 10), 200)
-	if err != nil {
-		return 0, err
+var msgIDRe = regexp.MustCompile(`<[^<>\s]+>`)
+
+// ForwardedHeader marks the copies the service forwards, so a mailbox that forwards them back
+// to the reply domain cannot start a loop.
+const ForwardedHeader = "X-GPC-Emailing-Forwarded"
+
+// processInbound reads the mail SES received on the reply domain: bounces, unsubscribe
+// requests, replies from contacts, auto-reply rules and the email_received trigger; each
+// message is then forwarded to the mailbox it was meant for. Each is handled once (the
+// inbound table).
+func (s *Service) processInbound(ctx context.Context, hasTime func() bool) (int, error) {
+	if s.mail == nil {
+		return 0, nil
 	}
 	seen := map[string]string{}
 	found := 0
-	// Oldest first, so replies and rules see mail in the order it came.
-	for i := len(refs) - 1; i >= 0 && hasTime(); i-- {
-		ref := refs[i]
-		done, err := store.Count(ctx, s.db.Pool, `SELECT count(*) FROM inbound WHERE id = $1`, "g-"+ref.ID)
+	for hasTime() {
+		n, err := s.mail.PollInbound(ctx, func(id string, raw []byte) error {
+			m, err := ses.Parse(id, raw)
+			if err != nil {
+				s.log.Warn("inbound mail not readable", "id", id, "err", err)
+				return nil
+			}
+			got, err := s.handleInbound(ctx, m, seen)
+			found += got
+			return err
+		})
 		if err != nil {
 			return found, err
 		}
-		if done > 0 {
-			continue
-		}
-		msg, err := mb.Get(ctx, ref.ID)
-		if err != nil {
-			s.log.Warn("gmail message", "id", ref.ID, "err", err)
-			continue
-		}
-		if n, err := s.handleInbound(ctx, msg, mine, seen); err != nil {
-			s.log.Error("inbound message", "id", ref.ID, "err", err)
-		} else {
-			found += n
+		if n == 0 {
+			break
 		}
 	}
-	s.noteStatus(ctx, map[string]any{"last_poll_ms": strconv.FormatInt(started.UnixMilli(), 10), "last_reply_poll": s.now().Format(time.RFC3339)})
+	s.noteStatus(ctx, map[string]any{"last_reply_poll": s.now().Format(time.RFC3339)})
 	s.noteMailboxes(ctx, seen)
 	return found, nil
 }
 
-func (s *Service) handleInbound(ctx context.Context, msg *gmail.Message, mine []string, seen map[string]string) (int, error) {
+func (s *Service) handleInbound(ctx context.Context, msg *ses.Message, seen map[string]string) (int, error) {
+	if msg.Header(ForwardedHeader) != "" {
+		return 0, nil
+	}
 	from := msg.Header("From")
 	fromEmail := core.AddressOf(from)
-	if contains(mine, fromEmail) {
+	if s.ourAddress(ctx, fromEmail) {
 		return 0, nil
 	}
 	text := msg.Text
@@ -241,44 +284,68 @@ func (s *Service) handleInbound(ctx context.Context, msg *gmail.Message, mine []
 	if ok, err := s.handleUnsubscribeRequest(ctx, subject, fromEmail); ok || err != nil {
 		return 0, err
 	}
-	recipients := recipientsOf(msg)
+	recipients := s.recipientsOf(ctx, msg)
 	tag, err := s.db.Pool.Exec(ctx, `INSERT INTO inbound (id, "from", from_email, "to", subject, snippet, received_at, status)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,'received') ON CONFLICT (id) DO NOTHING`,
-		"g-"+msg.ID, from, fromEmail, recipients, subject, core.Truncate(text, 300), msg.Date)
+		"s-"+msg.ID, from, fromEmail, recipients, subject, core.Truncate(text, 300), msg.Date)
 	if err != nil {
 		return 0, err
 	}
 	if tag.RowsAffected() == 0 {
-		return 0, nil // handled in an earlier poll
+		return 0, nil // handled before (SQS delivers at least once)
 	}
 	for _, a := range recipients {
-		if contains(mine, a) {
+		if s.ourAddress(ctx, a) {
 			seen[a] = msg.Date.Format(time.RFC3339)
 		}
 	}
+	refs := msgIDRe.FindAllString(msg.Header("In-Reply-To")+" "+msg.Header("References"), -1)
 	found := 0
-	if r, err := s.RecordReply(ctx, IncomingReply{ID: msg.ID, ThreadID: msg.ThreadID, From: from, Subject: subject, Text: text, Date: msg.Date}); err != nil {
+	if r, err := s.RecordReply(ctx, IncomingReply{ID: msg.ID, From: from, Subject: subject, Text: text, References: refs, Date: msg.Date}); err != nil {
 		return 0, err
 	} else if r != nil {
 		found = 1
 	}
-	in := inboundMail{ID: msg.ID, ThreadID: msg.ThreadID, RFCMessageID: msg.Header("Message-ID"), From: from, FromEmail: fromEmail,
+	in := inboundMail{ID: msg.ID, RFCMessageID: msg.Header("Message-ID"), From: from, FromEmail: fromEmail,
 		Subject: subject, Text: core.StripQuoted(text), Date: msg.Date, Recipients: recipients, Header: msg.Header}
-	res := s.autoReply(ctx, in, mine)
+	res := s.autoReply(ctx, in)
 	var contactID *string
 	if c, err := s.contact(ctx, s.db.Pool, core.EmailKey(fromEmail)); err == nil {
 		contactID = &c.ID
 		s.Fire(ctx, "email_received", Event{ContactID: c.ID, Text: subject + "\n" + in.Text, Subject: subject,
-			GmailThreadID: msg.ThreadID, RFCMessageID: in.RFCMessageID, To: strings.Join(recipients, ",")})
+			RFCMessageID: in.RFCMessageID, To: strings.Join(recipients, ",")})
 	}
 	var repliedAt *time.Time
 	if res.Status == "replied" {
 		now := s.now()
 		repliedAt = &now
 	}
-	_, err = s.db.Pool.Exec(ctx, `UPDATE inbound SET status = $2, reason = $3, autoreply_rule = $4, replied_at = $5, contact_id = $6 WHERE id = $1`,
-		"g-"+msg.ID, res.Status, nilIfEmpty(res.Reason), nilIfEmpty(res.Rule), repliedAt, contactID)
-	return found, err
+	if _, err := s.db.Pool.Exec(ctx, `UPDATE inbound SET status = $2, reason = $3, autoreply_rule = $4, replied_at = $5, contact_id = $6 WHERE id = $1`,
+		"s-"+msg.ID, res.Status, nilIfEmpty(res.Reason), nilIfEmpty(res.Rule), repliedAt, contactID); err != nil {
+		return found, err
+	}
+	s.forward(ctx, msg, from, subject, text, recipients)
+	return found, nil
+}
+
+// forward sends a copy of inbound mail to the real mailbox of each of our addresses it was
+// sent to (sales@reply.grandpine.com → sales@grandpine.com), with the original attached and
+// Reply-To the sender, so staff answer from their own mailbox.
+func (s *Service) forward(ctx context.Context, msg *ses.Message, from, subject, text string, recipients []string) {
+	for _, to := range recipients {
+		if !s.senderAllowed(ctx, to) {
+			continue
+		}
+		body := fmt.Sprintf("Reply received by GPC Emailing.\n\nFrom: %s\nTo: %s\nDate: %s\nSubject: %s\n\n%s",
+			from, to, msg.Date.Format(time.RFC1123Z), subject, core.Truncate(text, 50000))
+		if _, err := s.Send(ctx, Outgoing{
+			To: to, FromEmail: to, FromName: "GPC Emailing", ReplyTo: core.AddressOf(from), Force: true,
+			Subject: "Fwd: " + subject, Text: body, Attachment: msg.Raw,
+			Headers: map[string]string{ForwardedHeader: "1", "Auto-Submitted": "auto-forwarded"},
+		}); err != nil {
+			s.log.Warn("forward reply", "to", to, "err", err)
+		}
+	}
 }
 
 // noteMailboxes remembers when mail last arrived for each of our addresses (Settings shows it).

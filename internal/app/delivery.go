@@ -25,7 +25,6 @@ type buildOpts struct {
 	Track         bool
 	// NoUnsubscribe: transactional mail (auto-replies) carries no marketing footer.
 	NoUnsubscribe bool
-	Account       string
 }
 
 var (
@@ -90,8 +89,9 @@ func (s *Service) buildEmail(ctx context.Context, o buildOpts) (Built, error) {
 	headers := map[string]string{}
 	if !o.NoUnsubscribe {
 		list := []string{}
-		if o.Account != "" {
-			list = append(list, "<mailto:"+o.Account+"?subject=unsubscribe%20"+o.Token+">")
+		// The mailto variant reaches the reply domain, where the worker reads it.
+		if s.mailCfg.ReplyDomain != "" {
+			list = append(list, "<mailto:unsubscribe@"+s.mailCfg.ReplyDomain+"?subject=unsubscribe%20"+o.Token+">")
 		}
 		list = append(list, "<"+s.baseURL+"/u1?t="+o.Token+">")
 		headers["List-Unsubscribe"] = strings.Join(list, ", ")
@@ -129,8 +129,8 @@ func (s *Service) insertMessage(ctx context.Context, q store.Q, m newMessage) (s
 	return token, store.MapErr(err)
 }
 
-// threadOpts make a send a reply in an existing Gmail conversation.
-type threadOpts struct{ ThreadID, InReplyTo string }
+// threadOpts make a send a reply to an earlier message (In-Reply-To), so mail clients thread it.
+type threadOpts struct{ InReplyTo string }
 
 // deliver renders and sends one queued message. It never fails the caller: it returns the
 // message's new status, and the error when it failed (Delivery.deliver).
@@ -196,20 +196,19 @@ func (s *Service) deliver(ctx context.Context, msgID string, th threadOpts) (str
 	if subject == "" {
 		subject = t.Subject
 	}
-	account := s.Account(ctx)
-	email, err := s.buildEmail(ctx, buildOpts{HTML: html, Subject: subject, Vars: c.Fields(), Token: m.ID, Track: true, Account: account})
+	email, err := s.buildEmail(ctx, buildOpts{HTML: html, Subject: subject, Vars: c.Fields(), Token: m.ID, Track: true})
 	if err != nil {
 		return fail("failed", "failed", err)
 	}
 	res, err := s.Send(ctx, Outgoing{
 		To: c.Email, ToName: c.Name(), Subject: email.Subject, HTML: email.HTML, Text: email.Text,
-		FromName: fromName, FromEmail: from, ReplyTo: replyTo, Headers: email.Headers, ThreadID: th.ThreadID, InReplyTo: th.InReplyTo,
+		FromName: fromName, FromEmail: from, ReplyTo: replyTo, Headers: email.Headers, InReplyTo: th.InReplyTo,
 	})
 	if err != nil {
 		return fail("failed", "failed", err)
 	}
-	if _, err := finish("sent", ", gmail_id = $3, thread_id = $4, subject = $5, sent_at = $6, error = NULL, dry_run = $7",
-		[]any{res.ID, res.ThreadID, email.Subject, s.now(), res.DryRun}, "sent"); err != nil {
+	if _, err := finish("sent", ", provider_id = $3, rfc_message_id = $4, subject = $5, sent_at = $6, error = NULL, dry_run = $7",
+		[]any{res.ID, nilIfEmpty(res.RFCMessageID), email.Subject, s.now(), res.DryRun}, "sent"); err != nil {
 		return "sent", err
 	}
 	s.bumpDaily(ctx, s.db.Pool, "sent", 1)
@@ -263,7 +262,7 @@ func (s *Service) SendTest(ctx context.Context, email, templateID, campaignID st
 		}
 		out.FromName, out.FromEmail, out.ReplyTo = camp.FromName, camp.FromEmail, camp.ReplyTo
 	}
-	built, err := s.buildEmail(ctx, buildOpts{HTML: t.HTML, Subject: "[TEST] " + subject, Vars: vars, Token: "test", Account: s.Account(ctx)})
+	built, err := s.buildEmail(ctx, buildOpts{HTML: t.HTML, Subject: "[TEST] " + subject, Vars: vars, Token: "test"})
 	if err != nil {
 		return nil, err
 	}

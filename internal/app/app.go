@@ -1,6 +1,6 @@
 // Package app is the e-mail marketing service: contacts, templates, campaigns, tracking,
 // replies, automations, auto-replies, webhooks and the lead finder, over one Postgres
-// database, sending and reading mail through the connected Gmail mailbox.
+// database, sending through Amazon SES and receiving replies on the SES reply domain.
 //
 // It is the Go port of the Firebase build's Apps Script worker (apps-script/*.js) and of the
 // Firestore logic that ran in the browser (hosting/js/backend.js); the comments name the
@@ -15,10 +15,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 
-	"github.com/grandpine-capital/gpc-emailing/internal/gmail"
 	"github.com/grandpine-capital/gpc-emailing/internal/secretbox"
 	"github.com/grandpine-capital/gpc-emailing/internal/store"
 )
@@ -29,7 +27,8 @@ type Service struct {
 	box     *secretbox.Box
 	log     *slog.Logger
 	baseURL string // PUBLIC_BASE_URL
-	google  *gmail.OAuth
+	mail    Mail   // nil: SES not configured (dry-run only)
+	mailCfg MailConfig
 	hmacKey []byte
 
 	// HTTP is used for WhatsApp providers; Outbound for user-given URLs (webhooks, the lead
@@ -38,22 +37,16 @@ type Service struct {
 	Outbound *http.Client
 	// Now is the clock (tests move it).
 	Now func() time.Time
-	// MailboxOverride replaces the Gmail mailbox (tests).
-	MailboxOverride Mailbox
-
-	mbMu    sync.Mutex
-	mbToken string
-	mb      *gmail.Client
 
 	wake chan struct{}
 }
 
-// New builds the service. secretKey is SETTINGS_ENCRYPTION_KEY (base64); link keys and the
-// Gmail consent state are signed with a key derived from it.
-func New(db *store.DB, box *secretbox.Box, secretKey, baseURL string, google *gmail.OAuth, log *slog.Logger) *Service {
+// New builds the service. secretKey is SETTINGS_ENCRYPTION_KEY (base64); link keys are signed
+// with a key derived from it. mail is nil when SES is not configured.
+func New(db *store.DB, box *secretbox.Box, secretKey, baseURL string, mail Mail, mailCfg MailConfig, log *slog.Logger) *Service {
 	k := sha256.Sum256([]byte("gpc-emailing/hmac/" + secretKey))
 	return &Service{
-		db: db, box: box, log: log, baseURL: baseURL, google: google, hmacKey: k[:],
+		db: db, box: box, log: log, baseURL: baseURL, mail: mail, mailCfg: mailCfg, hmacKey: k[:],
 		HTTP:     &http.Client{Timeout: 30 * time.Second},
 		Outbound: SafeClient(30 * time.Second),
 		Now:      func() time.Time { return time.Now().UTC() },
@@ -61,9 +54,8 @@ func New(db *store.DB, box *secretbox.Box, secretKey, baseURL string, google *gm
 	}
 }
 
-func (s *Service) DB() *store.DB        { return s.db }
-func (s *Service) BaseURL() string      { return s.baseURL }
-func (s *Service) Google() *gmail.OAuth { return s.google }
+func (s *Service) DB() *store.DB   { return s.db }
+func (s *Service) BaseURL() string { return s.baseURL }
 
 // sign is a 24-hex HMAC of value (link keys, as hmac() in Config.js).
 func (s *Service) sign(value string) string {

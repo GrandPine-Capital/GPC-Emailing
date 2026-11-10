@@ -7,14 +7,16 @@ ChatDaddy, webhooks), auto-replies to incoming mail, inbound webhooks and a lead
 A Go service (`cmd/emailing`) serves the dashboard (`web/`, plain HTML and JavaScript), its
 API under `/api`, the public routes that e-mails and other apps reach, and runs the
 background worker, over one Postgres database whose schema Flyway owns (`db/migration`).
-Mail is sent from, and replies are read from, one connected **Gmail / Google Workspace**
-mailbox through the Gmail API.
+Mail goes out through **Amazon SES**; replies come back through an SES-received **reply
+domain**, are recorded, and are forwarded to the sender's own mailbox.
 
 | Concern | How |
 |---|---|
 | Staff sign-in | GrandPine staff realm (Keycloak, `gpc-staff`), client `emailing-staging`; the client role is the access level |
 | Database | PostgreSQL 17; Flyway migrations in `db/migration` |
-| Sending and reading mail | Gmail API, through the mailbox an admin connects in Settings (OAuth refresh token, sealed at rest) |
+| Sending | Amazon SES (API, the task role), from any address at a verified SES identity |
+| Bounces, complaints | SES configuration set → SNS → SQS, read by the worker |
+| Replies | Reply-To `name@<REPLY_DOMAIN>` → SES inbound → S3 → SQS; recorded, then forwarded to `name@<sending domain>` |
 | Background work | The worker in the same process: every `WORKER_INTERVAL` (5 min), and straight after a send, activation or enrolment |
 | WhatsApp | ChatDaddy or the WhatsApp Cloud API, called from the server |
 | Images in e-mails | Stored in Postgres, served at `/img/<id>` |
@@ -31,7 +33,7 @@ Staff sign in with their GrandPine account; access is granted in the IAM Workspa
 
 | Realm role | In Emailing |
 |---|---|
-| `admin` | Everything, plus Settings, integration keys and the Gmail connection |
+| `admin` | Everything, plus Settings and integration keys |
 | `editor` | Campaigns, contacts, templates, automations, auto-replies, lead finder |
 | `viewer` | Read-only: every write answers 403 |
 
@@ -47,20 +49,27 @@ Staff sign in with their GrandPine account; access is granted in the IAM Workspa
  │  • worker: queue, inbox,     │                /u, /u1 (unsubscribe)
  │    automations, lead finder  │◄── /hook (ChatDaddy, forms, Zapier)
  └──────┬───────────────┬───────┘
-        │               │ Gmail API (send, inbox, Send-mail-as)
-        ▼               ▼
-   PostgreSQL      the connected mailbox
+        │               │ SES send ─► recipients
+        ▼               │ SQS ◄─ SES events (bounces, complaints)
+   PostgreSQL           │ SQS ◄─ S3 ◄─ SES inbound (replies to name@REPLY_DOMAIN)
+                        └ forwards replies ─► name@<sending domain> (staff mailbox)
 ```
 
 The worker steps, in order, each tick (`internal/app/worker.go`): launch due campaigns and
-send queued mail within the daily and per-run limits; read new inbox mail (replies, bounces,
-"unsubscribe" requests, auto-reply rules, the `email_received` trigger); advance due automation
-runs; advance the oldest lead search. A Postgres advisory lock keeps one tick at a time even
-while a deploy runs two tasks.
+send queued mail within the daily limit and the SES quota; apply SES bounces (permanent →
+contact bounced) and complaints (→ unsubscribed); read mail received on the reply domain
+(replies, delivery reports, "unsubscribe" requests, auto-reply rules, the `email_received`
+trigger) and forward each to the mailbox it was meant for; advance due automation runs;
+advance the oldest lead search. A Postgres advisory lock keeps one tick at a time even while a
+deploy runs two tasks.
 
-Mail never fails for lack of Gmail: while no mailbox is connected, queued mail waits and
-automation sends retry hourly. **Dry-run mode** (Settings) records and tracks sends without
-delivering, with or without a mailbox.
+Replies are matched to the e-mail they answer by the Message-ID they name (In-Reply-To /
+References), else to the contact's latest e-mail. A campaign with its own **Reply-to** sends
+replies there instead, and they are not tracked. Forwarded copies carry
+`X-GPC-Emailing-Forwarded`, so a mailbox rule that sends them back cannot loop.
+
+Mail never fails for lack of SES: without it, queued mail waits and automation sends retry
+hourly. **Dry-run mode** (Settings) records and tracks sends without delivering.
 
 ## Run it locally
 
@@ -73,9 +82,8 @@ or against your own Postgres: `make migrate` (or Flyway by hand), then `make run
 `AUTH_MODE=dev` the sign-in page takes a token such as `dev:alex:admin` (admin, editor or
 viewer).
 
-To send for real locally, create a Google OAuth client (below) with redirect URI
-`http://localhost:8080/oauth/google/callback`, set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`,
-and connect Gmail in Settings.
+To send for real locally, set `SES_REGION` and `MAIL_FROM` (a verified identity) with AWS
+credentials in the environment (`AWS_PROFILE`).
 
 Tests: `make test`. The Postgres tests need `TEST_DATABASE_URL` pointing at a server where the
 user may `CREATE DATABASE` (each test gets a fresh database with the migrations applied).
@@ -88,32 +96,26 @@ Flyway image, runs the migrations as a one-off Fargate task, then rolls the ECS 
 
 ### One-time setup
 
-1. **Infrastructure** (ValueFarm.Infra): an ECS service, an RDS database, the migrate task
-   and DNS, as for the Helpdesk; `terraform output emailing_github_config` lists the GitHub
-   environment's secret and variables.
-2. **Staff realm client** `emailing-staging` in `gpc-staff` (confidential, standard flow +
-   PKCE, redirect `https://emailing-staging.grandpine.com/auth/callback`, post-logout redirect
-   `https://emailing-staging.grandpine.com/*`, client roles `admin`, `editor`, `viewer`).
-3. **Google OAuth client** in a Google Cloud project with the **Gmail API** enabled: type
-   *Web application*, redirect URI `https://emailing-staging.grandpine.com/oauth/google/callback`.
-   The consent screen must be **Internal** (Workspace) or **In production**: in *Testing*
-   Google expires the refresh token after 7 days and sending stops. The scopes are
-   `gmail.send`, `gmail.readonly` and `gmail.settings.basic`.
-4. **Service environment**: `DATABASE_URL`, `SETTINGS_ENCRYPTION_KEY`, `PUBLIC_BASE_URL`,
-   `KEYCLOAK_ISSUER`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, `GOOGLE_CLIENT_ID`,
-   `GOOGLE_CLIENT_SECRET` (see `.env.example`).
-5. An admin signs in, opens **Settings → Gmail & worker → Connect Gmail**, signs in to the
-   sending mailbox and approves. Sender identities ("Send mail as") load by themselves.
+Infrastructure is in ValueFarm.Infra (`staging/emailing.tf`, `staging/services/emailing`, its
+README has the steps): the ECS service, the database, the SES configuration set and event
+queue in the sending region, and the reply bucket, receipt rule and inbound queue in the
+receiving region (SES does not receive mail in ap-southeast-5). Then:
+
+1. **Staff realm client** `emailing-staging` in `gpc-staff` (`iam/`).
+2. **DNS**: `MX reply.grandpine.com → 10 inbound-smtp.ap-southeast-1.amazonaws.com`; the
+   sending domain's DKIM records are already in place for `grandpine.com`.
+3. **Service environment** (the task definition sets it): `DATABASE_URL`,
+   `SETTINGS_ENCRYPTION_KEY`, `PUBLIC_BASE_URL`, `KEYCLOAK_*`, `SES_REGION`, `MAIL_FROM`,
+   `SES_CONFIGURATION_SET`, `SES_EVENTS_QUEUE_URL`, `REPLY_DOMAIN`, `SES_INBOUND_QUEUE_URL`.
 
 `SETTINGS_ENCRYPTION_KEY` and `PUBLIC_BASE_URL` must stay the same once mail has gone out:
-the key signs click-tracking links and seals the Gmail token; the URL is in every tracking
-and unsubscribe link.
+the key signs click-tracking links; the URL is in every tracking and unsubscribe link.
 
 ## Limits
 
 | | |
 |---|---|
-| Gmail sending | ~500 recipients/day on free Gmail, ~2,000/day on Google Workspace; set **Max emails per day** below it |
+| SES | 50,000/day at 14/s in ap-southeast-5 (out of the sandbox); **Max emails per day** caps it further |
 | Per worker run | **Max emails per worker run** (default 40) every `WORKER_INTERVAL` |
 | Lead finder | DuckDuckGo with no key; Google Programmable Search 100 queries/day free; Hunter.io / Apollo.io with their keys |
 
@@ -125,7 +127,7 @@ Campaigns over the daily cap carry on the next day by themselves.
 |---|---|
 | `cmd/emailing` | Wiring: config, database, auth, worker, HTTP server |
 | `internal/app` | The service: delivery and tracking, campaigns, replies and bounces, automations, auto-replies, webhooks, lead searches, the dashboard's operations, the worker |
-| `internal/gmail` | Gmail API client and the OAuth consent flow |
+| `internal/ses` | SES sending, quota and identities; the events and inbound queues; parsing received mail |
 | `internal/leads` | Lead finder: search engines, Hunter, Apollo, the robots.txt-aware crawler |
 | `internal/core` | Merge tags, HTML-to-text, address and phone helpers (the same as `web/shared/email-core.js`) |
 | `internal/catalog` | Countries, focus industries, trigger and step names; `catalog.json` is generated from `web/shared/catalog.js` by `node scripts/gen-catalog.js` |
@@ -139,7 +141,9 @@ Campaigns over the daily cap carry on the next day by themselves.
 |---|---|
 | Firebase Auth (Google / e-mail link) + Firestore `admins/` | GrandPine SSO; roles from IAM (owner/admin → `admin`, member → `editor`) |
 | Firestore | Postgres (`db/migration/V1__emailing.sql`) |
-| Apps Script worker as the owner's Gmail (5-minute trigger) | The Go worker, Gmail API with the connected mailbox |
+| Apps Script worker as the owner's Gmail (5-minute trigger) | The Go worker; mail through Amazon SES |
+| Replies read from the Gmail inbox | Replies to the SES reply domain, forwarded to the sender's mailbox |
+| "Send mail as" aliases | Any address at a verified SES domain |
 | Clicks and unsubscribes queued in Firestore by `r.html` / `u.html` | Recorded at once by `/r` and `/u` (the old paths `/r.html`, `/u.html` still work on this host) |
 | Open pixel and one-click unsubscribe on the Apps Script URL | `/o`, `/u1` on `PUBLIC_BASE_URL` |
 | Webhooks at `<Apps Script URL>?a=hook&k=…` | `PUBLIC_BASE_URL/hook?k=…`: update ChatDaddy and form/Zapier URLs (Settings shows them) |

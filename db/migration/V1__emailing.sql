@@ -2,7 +2,7 @@
 -- Column names are the field names the dashboard reads, so rows go to the browser as they are.
 
 -- Settings documents: app (plain JSON), status, senders, inbox. Secrets (API keys, webhook
--- secret) and the Gmail connection are sealed with SETTINGS_ENCRYPTION_KEY (AES-256-GCM).
+-- secret) are sealed with SETTINGS_ENCRYPTION_KEY (AES-256-GCM).
 CREATE TABLE settings (
     name       text PRIMARY KEY,
     data       jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -118,8 +118,8 @@ CREATE TABLE messages (
     from_email        text,
     subject           text NOT NULL DEFAULT '',
     status            text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'sent', 'failed', 'skipped')),
-    gmail_id          text,
-    thread_id         text,
+    provider_id       text,  -- the SES message id
+    rfc_message_id    text,  -- its Message-ID header: replies name it in In-Reply-To / References
     error             text,
     dry_run           boolean NOT NULL DEFAULT false,
     open_count        integer NOT NULL DEFAULT 0,
@@ -133,7 +133,8 @@ CREATE TABLE messages (
 CREATE INDEX ix_messages_queued ON messages (created_at) WHERE status = 'queued';
 CREATE INDEX ix_messages_campaign ON messages (campaign_id);
 CREATE INDEX ix_messages_contact ON messages (contact_id, created_at DESC);
-CREATE INDEX ix_messages_thread ON messages (thread_id) WHERE thread_id IS NOT NULL;
+CREATE INDEX ix_messages_provider ON messages (provider_id) WHERE provider_id IS NOT NULL;
+CREATE INDEX ix_messages_rfc ON messages (rfc_message_id) WHERE rfc_message_id IS NOT NULL;
 
 CREATE TABLE automations (
     id             text PRIMARY KEY,
@@ -166,7 +167,7 @@ CREATE INDEX ix_runs_due ON runs (next_run_at) WHERE status = 'active';
 CREATE INDEX ix_runs_automation_contact ON runs (automation_id, contact_id);
 CREATE INDEX ix_runs_contact ON runs (contact_id) WHERE status = 'active';
 
--- E-mail and WhatsApp replies. E-mail ids are the Gmail message id (so a reply is stored once),
+-- E-mail and WhatsApp replies. E-mail ids are the SES receipt id (so a reply is stored once),
 -- WhatsApp ids wa-<provider id>.
 CREATE TABLE replies (
     id               text PRIMARY KEY,
@@ -226,8 +227,8 @@ CREATE TABLE autoreplies (
     updated_at      timestamptz NOT NULL DEFAULT now()
 );
 
--- Every inbox message the worker has read (id g-<gmail id>), so each is handled once, and what
--- the auto-reply rules did with it.
+-- Every e-mail SES received on the reply domain (id s-<receipt id>), so each is handled once, and
+-- what the auto-reply rules did with it.
 CREATE TABLE inbound (
     id             text PRIMARY KEY,
     "from"         text NOT NULL DEFAULT '',

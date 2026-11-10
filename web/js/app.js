@@ -209,8 +209,15 @@ const App = (() => {
 
   const setBackend = (fn) => { backend = fn; };
 
+  /** Which From addresses SES allows: any address at a verified domain, or a verified address. */
+  function sendersHint(settings) {
+    const ok = (settings.senders || []).filter((x) => x.verified);
+    if (!ok.length) return 'Verified SES senders: none loaded yet (Settings → Sender identities).';
+    return `Allowed: ${ok.map((x) => (x.type === 'domain' ? `any address @${esc(x.email)}` : esc(x.email))).join(', ')}.`;
+  }
+
   const me = { email: '', role: 'member' };
   const isAdmin = () => me.role === 'owner' || me.role === 'admin';
 
-  return { api, setBackend, me, isAdmin, icon, pageHead, cardHead, fieldLabel, openDrawer, closeDrawer, esc, toast, modal, confirmDialog, formData, fmtDate, statusBadge, chips, chipValues, getMeta, route, start, navigate, debounce };
+  return { api, setBackend, me, isAdmin, sendersHint, icon, pageHead, cardHead, fieldLabel, openDrawer, closeDrawer, esc, toast, modal, confirmDialog, formData, fmtDate, statusBadge, chips, chipValues, getMeta, route, start, navigate, debounce };
 })();

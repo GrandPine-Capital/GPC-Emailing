@@ -14,10 +14,10 @@ import (
 // no-reply senders, mailing lists / newsletters or other auto-responders (RFC 3834).
 
 type inboundMail struct {
-	ID, ThreadID, RFCMessageID, From, FromEmail, Subject, Text string
-	Date                                                       time.Time
-	Recipients                                                 []string
-	Header                                                     func(string) string
+	ID, RFCMessageID, From, FromEmail, Subject, Text string
+	Date                                             time.Time
+	Recipients                                       []string
+	Header                                           func(string) string
 }
 
 type autoReplyRule struct {
@@ -160,7 +160,7 @@ func nameParts(from string) (first, last string) {
 }
 
 // autoReply evaluates the enabled rules, in order, for one inbound message.
-func (s *Service) autoReply(ctx context.Context, m inboundMail, mine []string) autoReplyResult {
+func (s *Service) autoReply(ctx context.Context, m inboundMail) autoReplyResult {
 	rules, err := store.Structs[autoReplyRule](ctx, s.db.Pool, `SELECT * FROM autoreplies WHERE enabled ORDER BY sort_order, created_at`)
 	if err != nil {
 		return autoReplyResult{Status: "error", Reason: err.Error()}
@@ -229,14 +229,14 @@ func (s *Service) autoReply(ctx context.Context, m inboundMail, mine []string) a
 		case r.FromMode == "default":
 		default: // reply from the address they wrote to, when it is one of ours
 			for _, a := range m.Recipients {
-				if contains(mine, a) {
+				if s.senderAllowed(ctx, a) {
 					out.FromEmail = a
 					break
 				}
 			}
 		}
 		if r.KeepThread {
-			out.ThreadID, out.InReplyTo = m.ThreadID, m.RFCMessageID
+			out.InReplyTo = m.RFCMessageID
 		}
 		if _, err := s.Send(ctx, out); err != nil {
 			return autoReplyResult{Status: "error", Rule: r.ID, Reason: err.Error()}

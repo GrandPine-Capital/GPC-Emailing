@@ -1,6 +1,6 @@
 // Package httpapi exposes the service over HTTP: the dashboard's API under /api, the public
 // routes e-mails and other apps reach (open pixel, click redirect, unsubscribe, webhooks,
-// images, the Gmail consent callback), and the dashboard itself.
+// images), and the dashboard itself.
 package httpapi
 
 import (
@@ -212,7 +212,7 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusBadRequest, ue.Msg)
 	case errors.As(err, &fe):
 		writeError(w, http.StatusForbidden, fe.Msg)
-	case errors.Is(err, app.ErrNoMailbox):
+	case errors.Is(err, app.ErrNoMailer):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")

@@ -58,8 +58,8 @@ type Message struct {
 	FromEmail    *string    `db:"from_email"`
 	Subject      string     `db:"subject"`
 	Status       string     `db:"status"`
-	GmailID      *string    `db:"gmail_id"`
-	ThreadID     *string    `db:"thread_id"`
+	ProviderID   *string    `db:"provider_id"`    // SES message id
+	RFCMessageID *string    `db:"rfc_message_id"` // its Message-ID header
 	Error        *string    `db:"error"`
 	SentAt       *time.Time `db:"sent_at"`
 	OpenedAt     *time.Time `db:"opened_at"`

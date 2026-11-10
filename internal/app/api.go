@@ -31,7 +31,6 @@ func jsonText(v any) string {
 func (s *Service) Meta(ctx context.Context, role string) map[string]any {
 	st := s.Settings(ctx)
 	status := s.doc(ctx, "status")
-	g, _ := s.GmailStatus(ctx)
 	online := false
 	if t, err := time.Parse(time.RFC3339, str(status["last_tick"])); err == nil {
 		online = s.now().Sub(t) < 15*time.Minute
@@ -41,8 +40,8 @@ func (s *Service) Meta(ctx context.Context, role string) map[string]any {
 		lastTick = v
 	}
 	return map[string]any{
-		"role": role, "dryRun": st.DryRun, "workerConfigured": truthy(g["connected"]) || st.DryRun, "gmailConnected": truthy(g["connected"]),
-		"gmailConfigured": truthy(g["configured"]), "workerOnline": online, "lastTick": lastTick, "account": s.Account(ctx),
+		"role": role, "dryRun": st.DryRun, "workerConfigured": s.mail != nil || st.DryRun, "mailConfigured": s.mail != nil,
+		"replyDomain": s.mailCfg.ReplyDomain, "workerOnline": online, "lastTick": lastTick, "account": s.Account(ctx),
 		"remainingToday": s.RemainingToday(ctx),
 	}
 }
