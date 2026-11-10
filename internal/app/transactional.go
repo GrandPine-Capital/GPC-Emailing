@@ -22,13 +22,15 @@ import (
 
 // TxnRequest asks for one transactional e-mail.
 type TxnRequest struct {
-	Source    string // the asking system, e.g. "payment"
-	Key       string // idempotency key within Source, e.g. "payment.succeeded:<order id>"
-	Template  string // templates.key, e.g. "payment_receipt"
-	To        string
-	ToName    string
-	Reference string // the system's record the e-mail is about (the order id)
-	Vars      map[string]string
+	Source   string // the asking system, e.g. "payment"
+	Key      string // idempotency key within Source, e.g. "payment.succeeded:<order id>"
+	Template string // templates.key, e.g. "payment_receipt": the default
+	// TemplateID, when set, is the template staff chose instead (Transactional page).
+	TemplateID string
+	To         string
+	ToName     string
+	Reference  string // the system's record the e-mail is about (the order id)
+	Vars       map[string]string
 }
 
 // TxnRow is one transactional e-mail.
@@ -37,6 +39,7 @@ type TxnRow struct {
 	Source      string            `db:"source" json:"source"`
 	SourceKey   string            `db:"source_key" json:"source_key"`
 	TemplateKey string            `db:"template_key" json:"template_key"`
+	TemplateID  *string           `db:"template_id" json:"template_id"`
 	ToEmail     string            `db:"to_email" json:"to_email"`
 	ToName      string            `db:"to_name" json:"to_name"`
 	Vars        map[string]string `db:"vars" json:"vars"`
@@ -75,9 +78,9 @@ func (s *Service) QueueTransactional(ctx context.Context, r TxnRequest) (string,
 		r.Vars = map[string]string{}
 	}
 	var id string
-	err := s.db.Pool.QueryRow(ctx, `INSERT INTO transactional (id, source, source_key, template_key, to_email, to_name, vars, reference, created_at, next_attempt_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) ON CONFLICT (source, source_key) DO NOTHING RETURNING id`,
-		ids.New(), r.Source, r.Key, r.Template, r.To, strings.TrimSpace(r.ToName), r.Vars, r.Reference, s.now()).Scan(&id)
+	err := s.db.Pool.QueryRow(ctx, `INSERT INTO transactional (id, source, source_key, template_key, template_id, to_email, to_name, vars, reference, created_at, next_attempt_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10) ON CONFLICT (source, source_key) DO NOTHING RETURNING id`,
+		ids.New(), r.Source, r.Key, r.Template, nilIfEmpty(r.TemplateID), r.To, strings.TrimSpace(r.ToName), r.Vars, r.Reference, s.now()).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = s.db.Pool.QueryRow(ctx, `SELECT id FROM transactional WHERE source = $1 AND source_key = $2`, r.Source, r.Key).Scan(&id)
 		return id, false, err
@@ -105,9 +108,17 @@ func txnBackoff(n int) time.Duration {
 	return min(d, 6*time.Hour)
 }
 
-// TransactionalFrom is the sender of transactional mail (BILLING_FROM, else the default sender).
+// TransactionalFrom is the sender of transactional mail: the Transactional page's, else
+// BILLING_FROM / BILLING_FROM_NAME, else the default sender and the Settings name.
 func (s *Service) TransactionalFrom(ctx context.Context) (email, name string) {
-	email, name = s.mailCfg.TransactionalFrom, s.mailCfg.TransactionalFromName
+	cfg := s.txnSettings(ctx)
+	email, name = cfg.FromEmail, cfg.FromName
+	if email == "" {
+		email = s.mailCfg.TransactionalFrom
+	}
+	if name == "" {
+		name = s.mailCfg.TransactionalFromName
+	}
 	if email == "" {
 		email = s.Account(ctx)
 	}
@@ -150,7 +161,13 @@ func (s *Service) SendTransactional(ctx context.Context, id string) (string, err
 		return "queued", errors.Join(err, uerr)
 	}
 	var t Template
-	t, err = store.Struct[Template](ctx, s.db.Pool, `SELECT id, name, mode, subject, html FROM templates WHERE key = $1`, r.TemplateKey)
+	err = store.ErrNotFound
+	if r.TemplateID != nil {
+		t, err = store.Struct[Template](ctx, s.db.Pool, `SELECT id, name, mode, subject, html FROM templates WHERE id = $1`, *r.TemplateID)
+	}
+	if IsNotFound(err) { // the default, also when the chosen template was deleted since
+		t, err = store.Struct[Template](ctx, s.db.Pool, `SELECT id, name, mode, subject, html FROM templates WHERE key = $1`, r.TemplateKey)
+	}
 	if IsNotFound(err) {
 		return fail(fmt.Errorf("no template with key %q", r.TemplateKey), true)
 	} else if err != nil {
@@ -238,14 +255,16 @@ func (s *Service) noteTransactionalEvent(ctx context.Context, providerID, status
 }
 
 // Transactionals lists transactional mail, newest first, for the dashboard and for the
-// systems that asked (filter by source and reference).
-func (s *Service) Transactionals(ctx context.Context, source, reference, status string, limit int) ([]TxnRow, error) {
+// systems that asked (filter by source and reference; q matches the order or the address).
+func (s *Service) Transactionals(ctx context.Context, source, reference, status, q string, limit int) ([]TxnRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
+	q = strings.ToLower(strings.TrimSpace(q))
 	return store.Structs[TxnRow](ctx, s.db.Pool, `SELECT * FROM transactional
 		WHERE ($1 = '' OR source = $1) AND ($2 = '' OR reference = $2) AND ($3 = '' OR status = $3)
-		ORDER BY created_at DESC LIMIT $4`, source, reference, status, limit)
+		  AND ($4 = '' OR lower(reference) = $4 OR to_email LIKE '%' || $4 || '%')
+		ORDER BY created_at DESC LIMIT $5`, source, reference, status, q, limit)
 }
 
 // ResendTransactional queues a transactional e-mail again (a failed one, or a copy the person

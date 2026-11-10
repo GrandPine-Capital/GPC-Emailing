@@ -25,13 +25,6 @@ var ErrHookOff = errors.New("payment events are not set up (PAYMENT_EVENT_SECRET
 // ErrBadSignature: the sig header does not match the body.
 var ErrBadSignature = errors.New("invalid signature")
 
-// paymentTemplates maps an event type to the template it sends.
-var paymentTemplates = map[string]string{
-	"payment.succeeded": "payment_receipt",
-	"payment.pending":   "payment_pending",
-	"payment.refunded":  "payment_refunded",
-}
-
 type paymentEvent struct {
 	Type       string `json:"type"`
 	PaymentID  string `json:"payment_id"`
@@ -145,9 +138,13 @@ func (s *Service) HandlePaymentEvent(ctx context.Context, sig string, body []byt
 	if err := dec.Decode(&ev); err != nil || ev.Type == "" || ev.PaymentID == "" {
 		return nil, userErr("not a payment event")
 	}
-	tmpl, ok := paymentTemplates[ev.Type]
-	if !ok {
+	te, ok := txnEvent(ev.Type)
+	if !ok || te.Source != "payment" {
 		return map[string]any{"ok": true, "ignored": "no e-mail for " + ev.Type}, nil
+	}
+	set := s.txnSettings(ctx).Events[ev.Type]
+	if set.Off {
+		return map[string]any{"ok": true, "ignored": te.Label + " is turned off (Transactional page)"}, nil
 	}
 	if !core.IsEmail(ev.Customer.Email) {
 		return map[string]any{"ok": true, "ignored": "no customer e-mail"}, nil
@@ -174,7 +171,7 @@ func (s *Service) HandlePaymentEvent(ctx context.Context, sig string, body []byt
 		vars["refunded_at"] = localTime(ev.Refund.At)
 	}
 	id, created, err := s.QueueTransactional(ctx, TxnRequest{
-		Source: "payment", Key: ev.Type + ":" + ev.PaymentID, Template: tmpl,
+		Source: "payment", Key: ev.Type + ":" + ev.PaymentID, Template: te.DefaultKey, TemplateID: set.TemplateID,
 		To: ev.Customer.Email, ToName: ev.Customer.Name, Reference: ev.PaymentID, Vars: vars,
 	})
 	if err != nil {

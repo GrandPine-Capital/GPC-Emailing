@@ -93,8 +93,11 @@ a failed send is retried by the worker (1, 2, 4 … minutes, 8 tries), and SES b
 complaints mark the row. Staff see them at `GET /api/transactional?source=payment&reference=<order id>`
 and resend with `POST /api/transactional/{id}/resend`.
 
-The templates are ordinary HTML templates in the dashboard (category *transactional*): edit
-the wording there. A template with a key cannot be deleted. Merge tags: `first_name`,
+The **Transactional** page in the dashboard sets, for each of these e-mails, whether it is on
+and which template it uses, and the sender (empty = `BILLING_FROM` / `BILLING_FROM_NAME`); it
+lists everything sent, searchable by order number or address, with Resend. Admins change the
+settings; editors may resend. The templates are ordinary HTML templates (category
+*transactional*): edit the wording there. A template with a key cannot be deleted. Merge tags: `first_name`,
 `full_name`, `item`, `amount` (`RM 1,234.50`), `paid_at`, `payment_method`, `order_id`,
 `receipt_url`, `instructions_url`, `payment_reference`, `expires_at`, `bank_name`,
 `account_name`, `account_number`, `duitnow_id`, `refunded_at`, `company_address`.

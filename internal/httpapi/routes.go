@@ -298,9 +298,16 @@ func (s *Server) routes(mux *http.ServeMux) {
 	h("GET "+p+"/transactional", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		limit, _ := strconv.Atoi(q.Get("limit"))
-		v, err := svc.Transactionals(r.Context(), q.Get("source"), q.Get("reference"), q.Get("status"), limit)
+		v, err := svc.Transactionals(r.Context(), q.Get("source"), q.Get("reference"), q.Get("status"), q.Get("q"), limit)
 		s.reply(w, r, v, err)
 	})
+	h("GET "+p+"/transactional/config", func(w http.ResponseWriter, r *http.Request) {
+		v, err := svc.TransactionalConfig(r.Context())
+		s.reply(w, r, v, err)
+	})
+	adm("PUT "+p+"/transactional/config", withBody(func(w http.ResponseWriter, r *http.Request, b body) {
+		s.reply(w, r, ok, svc.SaveTransactionalConfig(r.Context(), b))
+	}))
 	h("POST "+p+"/transactional/{id}/resend", func(w http.ResponseWriter, r *http.Request) {
 		st, err := svc.ResendTransactional(r.Context(), id(r))
 		s.reply(w, r, map[string]any{"ok": err == nil, "status": st}, err)
