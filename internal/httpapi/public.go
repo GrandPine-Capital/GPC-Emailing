@@ -172,6 +172,30 @@ func (s *Server) public(mux *http.ServeMux) {
 		}
 	})
 
+	// GPC-CSTicket's signed requests: the customer password-reset e-mail.
+	mux.HandleFunc("POST /hooks/helpdesk", func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+		if err != nil {
+			writeError(w, http.StatusRequestEntityTooLarge, "body too large")
+			return
+		}
+		out, err := svc.HandleHelpdeskEvent(r.Context(), r.Header.Get("sig"), raw)
+		var ue app.UserError
+		switch {
+		case errors.Is(err, app.ErrHelpdeskHookOff):
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+		case errors.Is(err, app.ErrBadSignature):
+			writeError(w, http.StatusUnauthorized, err.Error())
+		case errors.As(err, &ue):
+			writeError(w, http.StatusBadRequest, ue.Msg)
+		case err != nil:
+			s.log.ErrorContext(r.Context(), "helpdesk event", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+		default:
+			writeJSON(w, http.StatusOK, out)
+		}
+	})
+
 	// Images uploaded in the e-mail builder.
 	mux.HandleFunc("GET /img/{id}", func(w http.ResponseWriter, r *http.Request) {
 		mime, data, err := svc.Upload(r.Context(), r.PathValue("id"))

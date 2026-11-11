@@ -79,6 +79,10 @@ func run(log *slog.Logger) error {
 	if cfg.PaymentEventSecret == "" {
 		log.Warn("PAYMENT_EVENT_SECRET not set: payment receipts are off (POST /hooks/payments answers 503)")
 	}
+	svc.HelpdeskEventSecret = cfg.HelpdeskEventSecret
+	if cfg.HelpdeskEventSecret == "" {
+		log.Warn("HELPDESK_EVENT_SECRET not set: Helpdesk password-reset mail is off (POST /hooks/helpdesk answers 503)")
+	}
 
 	if cfg.WorkerEnabled {
 		go svc.Run(ctx, cfg.WorkerInterval)
