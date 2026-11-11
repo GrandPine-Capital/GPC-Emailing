@@ -37,9 +37,10 @@ type Config struct {
 	WorkerInterval time.Duration
 	WorkerEnabled  bool
 	// Transactional mail (receipts): its sender, and GPC-Payment's event secret.
-	BillingFrom        string // BILLING_FROM, e.g. billing@grandpine.com; default MAIL_FROM
-	BillingFromName    string // BILLING_FROM_NAME, default the Settings sender name
-	PaymentEventSecret string // PAYMENT_EVENT_SECRET: verifies POST /hooks/payments; unset turns it off
+	BillingFrom         string // BILLING_FROM, e.g. billing@grandpine.com; default MAIL_FROM
+	BillingFromName     string // BILLING_FROM_NAME, default the Settings sender name
+	PaymentEventSecret  string // PAYMENT_EVENT_SECRET: verifies POST /hooks/payments; unset turns it off
+	HelpdeskEventSecret string // HELPDESK_EVENT_SECRET: verifies POST /hooks/helpdesk; unset turns it off
 }
 
 func get(key, def string) string {
@@ -70,6 +71,7 @@ func Load() (Config, error) {
 		BillingFrom:           strings.ToLower(get("BILLING_FROM", "")),
 		BillingFromName:       get("BILLING_FROM_NAME", ""),
 		PaymentEventSecret:    get("PAYMENT_EVENT_SECRET", ""),
+		HelpdeskEventSecret:   get("HELPDESK_EVENT_SECRET", ""),
 	}
 	var errs []error
 	interval, err := time.ParseDuration(get("WORKER_INTERVAL", "5m"))
