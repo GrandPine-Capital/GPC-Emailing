@@ -242,3 +242,51 @@ func TestTransactionalConfig(t *testing.T) {
 		t.Fatalf("default sender = %s", from)
 	}
 }
+
+const chargeUpcoming = `{"type":"subscription.charge_upcoming","payment_id":"Pay77","occurred_at":"2026-11-22T08:00:00Z","source":"payment-portal",` +
+	`"customer":{"name":"Aisyah Rahman","phone":"+60123456789","email":"aisyah@example.com","language":""},` +
+	`"product":"ValueFarm Pro","amount":0.00,"currency":"MYR","basis":"paid","reference":"stripe:cs_1","payment_method":"stripe",` +
+	`"renewal":false,"subscription":{"id":"Sub1","cycle":1},"environment":"staging","paid_at":"","features":[],` +
+	`"charge_at":"2026-11-25T16:30:00Z","charge_amount":1428.00,"plan_start":"trial"}`
+
+func TestChargeUpcomingNotice(t *testing.T) {
+	e := setup(t, true)
+	e.svc.PaymentEventSecret = paymentSecret
+
+	out := e.paymentEvent(t, chargeUpcoming)
+	if out["status"] != "sent" || out["created"] != true {
+		t.Fatalf("notice: %v", out)
+	}
+	rows, err := e.svc.Transactionals(e.ctx, "payment", "Pay77", "", "", 0)
+	if err != nil || len(rows) != 1 || rows[0].TemplateKey != "subscription_charge_upcoming" {
+		t.Fatalf("row: %+v %v", rows, err)
+	}
+	msg := decoded(e.ses.since(0)[0])
+	for _, want := range []string{
+		"To: \"Aisyah Rahman\" <aisyah@example.com>",
+		"Subject: Your ValueFarm Pro plan: first charge in 3 days",
+		"Hi Aisyah,", "ValueFarm Pro", "26 Nov 2026", "RM 1,428.00", "every year", "Manage plan", "Pay77",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("notice lacks %q", want)
+		}
+	}
+	// RM 0.00, the free order's own amount, must not be what the member is told.
+	if strings.Contains(msg, "RM 0.00") {
+		t.Error("notice shows the RM 0.00 opening order instead of the charge")
+	}
+
+	// Payment retries the same event: nothing is sent twice.
+	if out = e.paymentEvent(t, chargeUpcoming); out["created"] != false || e.ses.count() != 1 {
+		t.Fatalf("retry: %v, sent %d", out, e.ses.count())
+	}
+
+	// Turned off on the Transactional page: acknowledged, nothing sent.
+	if err := e.svc.SaveTransactionalConfig(e.ctx, map[string]any{"events": map[string]any{"subscription.charge_upcoming": map[string]any{"enabled": false}}}); err != nil {
+		t.Fatal(err)
+	}
+	other := strings.Replace(chargeUpcoming, "Pay77", "Pay78", 1)
+	if out = e.paymentEvent(t, other); out["ignored"] == nil || e.ses.count() != 1 {
+		t.Fatalf("turned off: %v, sent %d", out, e.ses.count())
+	}
+}

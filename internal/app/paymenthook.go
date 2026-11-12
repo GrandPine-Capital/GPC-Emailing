@@ -54,6 +54,9 @@ type paymentEvent struct {
 	Refund *struct {
 		At string `json:"at"`
 	} `json:"refund"`
+	// subscription.charge_upcoming only: when a plan's first charge falls (RFC 3339) and how much.
+	ChargeAt     string      `json:"charge_at"`
+	ChargeAmount json.Number `json:"charge_amount"`
 }
 
 // myt is the time zone dates in e-mails are written in.
@@ -66,6 +69,15 @@ func localTime(rfc string) string {
 		return ""
 	}
 	return t.In(myt).Format("2 Jan 2006, 3:04 PM")
+}
+
+// localDate writes an RFC 3339 time as "25 Nov 2026" in Malaysia time.
+func localDate(rfc string) string {
+	t, err := time.Parse(time.RFC3339, rfc)
+	if err != nil {
+		return ""
+	}
+	return t.In(myt).Format("2 Jan 2006")
 }
 
 // formatAmount writes 1234.5 MYR as "RM 1,234.50".
@@ -169,6 +181,12 @@ func (s *Service) HandlePaymentEvent(ctx context.Context, sig string, body []byt
 	}
 	if ev.Refund != nil {
 		vars["refunded_at"] = localTime(ev.Refund.At)
+	}
+	if ev.Type == "subscription.charge_upcoming" {
+		vars["charge_at"], vars["charge_amount"] = localDate(ev.ChargeAt), formatAmount(ev.ChargeAmount, ev.Currency)
+		if ev.ChargeAmount == "" {
+			vars["charge_amount"] = vars["amount"]
+		}
 	}
 	id, created, err := s.QueueTransactional(ctx, TxnRequest{
 		Source: "payment", Key: ev.Type + ":" + ev.PaymentID, Template: te.DefaultKey, TemplateID: set.TemplateID,
