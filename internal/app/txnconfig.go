@@ -26,6 +26,7 @@ var TxnEvents = []TxnEvent{
 	{"payment.succeeded", "payment", "Payment receipt", "Sent when a payment succeeds: paid online, or marked paid by Finance.", "payment_receipt"},
 	{"payment.pending", "payment", "Bank transfer instructions", "Sent when a buyer chooses bank transfer: the account, the reference and the pay-by date.", "payment_pending"},
 	{"payment.refunded", "payment", "Refund notice", "Sent when Finance refunds an order.", "payment_refunded"},
+	{"subscription.charge_upcoming", "payment", "Plan first-charge notice", "Sent 3 days before a plan's free days end: the date and amount of the first card charge.", "subscription_charge_upcoming"},
 	{"helpdesk.password_reset", "helpdesk", "Helpdesk password reset", "Sent when a Helpdesk customer asks to reset their password.", "helpdesk_password_reset"},
 }
 

@@ -84,6 +84,7 @@ no-reply sender (`no-reply@…`, `noreply@…`) gets no Reply-To at all.
 | `payment.succeeded` | `payment_receipt` | Receipt, with the link to the receipt page (event check-in QR) |
 | `payment.pending` | `payment_pending` | Bank-transfer instructions: account, reference, pay-by date |
 | `payment.refunded` | `payment_refunded` | Refund notice |
+| `subscription.charge_upcoming` | `subscription_charge_upcoming` | Plan first-charge notice, 3 days before a free trial ends: the date and amount of the first card charge, then yearly |
 
 GPC-Payment delivers its events to `POST /hooks/payments` (outbox target `emailing`, its
 `EMAILING_BASE_URL` and `EMAILING_EVENT_SECRET`), signed like its CRM events: header
@@ -100,7 +101,8 @@ settings; editors may resend. The templates are ordinary HTML templates (categor
 *transactional*): edit the wording there. A template with a key cannot be deleted. Merge tags: `first_name`,
 `full_name`, `item`, `amount` (`RM 1,234.50`), `paid_at`, `payment_method`, `order_id`,
 `receipt_url`, `instructions_url`, `payment_reference`, `expires_at`, `bank_name`,
-`account_name`, `account_number`, `duitnow_id`, `refunded_at`, `company_address`.
+`account_name`, `account_number`, `duitnow_id`, `refunded_at`, `charge_at` (`25 Nov 2026`),
+`charge_amount`, `company_address`.
 
 ## Run it locally
 
