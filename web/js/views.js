@@ -122,7 +122,7 @@
           <div class="field"><label>Campaign name <span class="hint">(internal)</span></label><input type="text" name="name" value="${esc(c.name)}" placeholder="October newsletter"></div>
           <div class="field"><label>Subject line</label><input type="text" name="subject" value="${esc(c.subject)}" placeholder="{{first_name}}, ..."></div>
           <div class="field"><label>Preheader <span class="hint">(preview text in inbox)</span></label><input type="text" name="preheader" value="${esc(c.preheader)}"></div>
-          <div class="row"><div class="field"><label>From name</label><input type="text" name="from_name" value="${esc(c.from_name)}" placeholder="${esc(settings.from_name)}"></div>
+          <div class="row top"><div class="field"><label>From name</label><input type="text" name="from_name" value="${esc(c.from_name)}" placeholder="${esc(settings.from_name)}"></div>
             <div class="field"><label>From email</label><input type="email" name="from_email" value="${esc(c.from_email)}" placeholder="${esc(meta.account || 'Default sender')} (default)">
               <div class="hint">${App.sendersHint(settings)}</div></div></div>
           <div class="field"><label>Reply-to <span class="hint">(optional: leave empty so replies come back here and are forwarded to the From address)</span></label><input type="email" name="reply_to" value="${esc(c.reply_to)}" placeholder="${esc(settings.reply_to || (meta.replyDomain ? 'name@' + meta.replyDomain : ''))}"></div>
