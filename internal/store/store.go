@@ -124,13 +124,34 @@ func toRow(r pgx.CollectableRow) (Row, error) {
 	return m, nil
 }
 
+// stalePlan: the statement was prepared before a migration changed a table it reads ("cached
+// plan must not change result type"). pgx drops the stale statement when it sees this, so the
+// same query succeeds when run again. It happens on the release still running while Flyway
+// migrates, once per pooled connection.
+func stalePlan(err error) bool {
+	var pg *pgconn.PgError
+	return errors.As(err, &pg) && pg.Code == "0A000"
+}
+
+// collect runs a read query and gathers its rows, once more when the first try met a stale plan.
+// A transaction cannot continue after an error, so inside one the error is returned as it is.
+func collect[T any](ctx context.Context, q Q, fn pgx.RowToFunc[T], sql string, args ...any) ([]T, error) {
+	for attempt := 0; ; attempt++ {
+		rows, err := q.Query(ctx, sql, args...)
+		var out []T
+		if err == nil {
+			out, err = pgx.CollectRows(rows, fn)
+		}
+		if _, inTx := q.(pgx.Tx); err != nil && attempt == 0 && !inTx && stalePlan(err) {
+			continue
+		}
+		return out, err
+	}
+}
+
 // Rows runs a query and returns every row as a map (never nil).
 func Rows(ctx context.Context, q Q, sql string, args ...any) ([]Row, error) {
-	rows, err := q.Query(ctx, sql, args...)
-	if err != nil {
-		return nil, MapErr(err)
-	}
-	out, err := pgx.CollectRows(rows, toRow)
+	out, err := collect(ctx, q, toRow, sql, args...)
 	if err != nil {
 		return nil, MapErr(err)
 	}
@@ -142,15 +163,11 @@ func Rows(ctx context.Context, q Q, sql string, args ...any) ([]Row, error) {
 
 // One runs a query for a single row; ErrNotFound when there is none.
 func One(ctx context.Context, q Q, sql string, args ...any) (Row, error) {
-	rows, err := q.Query(ctx, sql, args...)
+	out, err := collect(ctx, q, toRow, sql, args...)
 	if err != nil {
 		return nil, MapErr(err)
 	}
-	r, err := pgx.CollectExactlyOneRow(rows, toRow)
-	if err != nil {
-		return nil, MapErr(err)
-	}
-	return r, nil
+	return exactlyOne(out)
 }
 
 // scanStruct scans a row into T by `db` tags. Columns without a field are skipped, fields
@@ -178,11 +195,7 @@ func scanStruct[T any](row pgx.CollectableRow) (T, error) {
 
 // Structs runs a query into structs matched by `db` column names.
 func Structs[T any](ctx context.Context, q Q, sql string, args ...any) ([]T, error) {
-	rows, err := q.Query(ctx, sql, args...)
-	if err != nil {
-		return nil, MapErr(err)
-	}
-	out, err := pgx.CollectRows(rows, scanStruct[T])
+	out, err := collect(ctx, q, scanStruct[T], sql, args...)
 	if err != nil {
 		return nil, MapErr(err)
 	}
@@ -191,13 +204,24 @@ func Structs[T any](ctx context.Context, q Q, sql string, args ...any) ([]T, err
 
 // Struct runs a query for one struct; ErrNotFound when there is none.
 func Struct[T any](ctx context.Context, q Q, sql string, args ...any) (T, error) {
-	rows, err := q.Query(ctx, sql, args...)
+	out, err := collect(ctx, q, scanStruct[T], sql, args...)
 	if err != nil {
 		var zero T
 		return zero, MapErr(err)
 	}
-	v, err := pgx.CollectExactlyOneRow(rows, scanStruct[T])
-	return v, MapErr(err)
+	return exactlyOne(out)
+}
+
+// exactlyOne is the single row of a result: ErrNotFound for none, an error for several.
+func exactlyOne[T any](rows []T) (T, error) {
+	var zero T
+	switch len(rows) {
+	case 0:
+		return zero, ErrNotFound
+	case 1:
+		return rows[0], nil
+	}
+	return zero, fmt.Errorf("store: expected one row, got %d", len(rows))
 }
 
 // Count runs a SELECT count(*).
