@@ -2,6 +2,9 @@ package httpapi_test
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -190,5 +193,43 @@ func TestPublicRoutes(t *testing.T) {
 	_, c := call(t, srv, "GET", "/api/contacts/web@hook.io", editor, "")
 	if c["status"] != "unsubscribed" {
 		t.Errorf("contact status %v", c["status"])
+	}
+}
+
+// TestPaymentHookRoute: GPC-Payment's signed notice of a plan's first charge answers 200 and is
+// sent; an event type with no e-mail answers 200 too, marked ignored, so Payment does not retry it.
+func TestPaymentHookRoute(t *testing.T) {
+	srv, svc, mail := server(t)
+	svc.PaymentEventSecret = "hook-secret"
+	sign := func(body string) string {
+		m := hmac.New(sha256.New, []byte("hook-secret"))
+		m.Write([]byte(body))
+		return hex.EncodeToString(m.Sum(nil))
+	}
+	post := func(body string) (int, map[string]any) {
+		t.Helper()
+		req, _ := http.NewRequest("POST", srv.URL+"/hooks/payments", strings.NewReader(body))
+		req.Header.Set("sig", sign(body))
+		res, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(res.Body).Decode(&out)
+		return res.StatusCode, out
+	}
+	notice := `{"type":"subscription.charge_upcoming","payment_id":"Pay5","occurred_at":"2026-11-22T08:00:00Z",` +
+		`"customer":{"name":"Lim Wei","email":"lim@example.com"},"product":"ValueFarm Pro","amount":0.00,"currency":"MYR",` +
+		`"charge_at":"2026-11-25T16:30:00Z","charge_amount":1428.00,"plan_start":"trial"}`
+	if code, out := post(notice); code != http.StatusOK || out["status"] != "sent" {
+		t.Fatalf("charge_upcoming: %d %v", code, out)
+	}
+	if len(mail.sent) != 1 || !strings.Contains(mail.sent[0], "first charge in 3 days") {
+		t.Fatalf("sent %d: %.200s", len(mail.sent), strings.Join(mail.sent, "\n"))
+	}
+	unknown := strings.Replace(notice, "subscription.charge_upcoming", "subscription.something_new", 1)
+	if code, out := post(unknown); code != http.StatusOK || out["ignored"] == nil || len(mail.sent) != 1 {
+		t.Fatalf("unknown type: %d %v, sent %d", code, out, len(mail.sent))
 	}
 }

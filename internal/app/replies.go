@@ -183,6 +183,12 @@ func (s *Service) processEvents(ctx context.Context, hasTime func() bool) (int, 
 					msg = &m
 				}
 			}
+			switch {
+			case ev.Type == "Bounce" && ev.Permanent:
+				s.noteTransactionalEvent(ctx, ev.MessageID, "bounced")
+			case ev.Type == "Complaint":
+				s.noteTransactionalEvent(ctx, ev.MessageID, "complained")
+			}
 			for _, r := range ev.Recipients {
 				switch {
 				case ev.Type == "Bounce" && ev.Permanent:

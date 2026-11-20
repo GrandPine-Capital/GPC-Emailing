@@ -54,6 +54,7 @@ func (s *Service) Tick(ctx context.Context, maxDur time.Duration) (map[string]an
 		}
 	}
 	step("optins", func() (int, error) { return s.processOptIns(ctx, hasTime) })
+	step("transactional", func() (int, error) { return s.processTransactional(ctx, hasTime) })
 	step("campaigns", func() (int, error) { return s.processQueue(ctx, hasTime) })
 	step("bounces", func() (int, error) { return s.processEvents(ctx, hasTime) })
 	step("replies", func() (int, error) { return s.processInbound(ctx, hasTime) })

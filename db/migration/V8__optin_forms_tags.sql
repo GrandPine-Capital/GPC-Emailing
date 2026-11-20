@@ -1,35 +1,36 @@
 -- Opt-in and opt-out, subscribe forms, tag-based audiences.
+-- Every statement can run again without harm (IF EXISTS / IF NOT EXISTS / ON CONFLICT).
 
 -- pending: asked to confirm (double opt-in) and not mailed until they do.
 -- complained: marked an e-mail as spam; never mailed again.
-ALTER TABLE contacts DROP CONSTRAINT contacts_status_check;
+ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_status_check;
 ALTER TABLE contacts ADD CONSTRAINT contacts_status_check
     CHECK (status IN ('subscribed', 'pending', 'unsubscribed', 'bounced', 'complained'));
 
 ALTER TABLE contacts
-    ADD COLUMN confirmed_at       timestamptz,
-    ADD COLUMN complained_at      timestamptz,
+    ADD COLUMN IF NOT EXISTS confirmed_at       timestamptz,
+    ADD COLUMN IF NOT EXISTS complained_at      timestamptz,
     -- A confirmation e-mail is owed while optin_sent_at is older than optin_requested_at.
-    ADD COLUMN optin_requested_at timestamptz,
-    ADD COLUMN optin_sent_at      timestamptz,
+    ADD COLUMN IF NOT EXISTS optin_requested_at timestamptz,
+    ADD COLUMN IF NOT EXISTS optin_sent_at      timestamptz,
     -- What confirming applies: {"list_ids": [], "tags": [], "form_id": ""}.
-    ADD COLUMN pending_optin      jsonb,
-    ADD COLUMN unsubscribe_reason text NOT NULL DEFAULT '';
-CREATE INDEX ix_contacts_optin_due ON contacts (optin_requested_at) WHERE status = 'pending';
+    ADD COLUMN IF NOT EXISTS pending_optin      jsonb,
+    ADD COLUMN IF NOT EXISTS unsubscribe_reason text NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS ix_contacts_optin_due ON contacts (optin_requested_at) WHERE status = 'pending';
 
 -- Public lists are the ones a subscriber may join or leave on the preference page.
-ALTER TABLE lists ADD COLUMN is_public boolean NOT NULL DEFAULT false;
+ALTER TABLE lists ADD COLUMN IF NOT EXISTS is_public boolean NOT NULL DEFAULT false;
 
 -- A campaign goes to contacts on any of its lists and, when tags are set, carrying any of
 -- those tags (tags alone when no list is chosen), minus the excluded lists and tags.
 ALTER TABLE campaigns
-    ADD COLUMN tags             text[] NOT NULL DEFAULT '{}',
-    ADD COLUMN exclude_list_ids text[] NOT NULL DEFAULT '{}',
-    ADD COLUMN exclude_tags     text[] NOT NULL DEFAULT '{}';
+    ADD COLUMN IF NOT EXISTS tags             text[] NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS exclude_list_ids text[] NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS exclude_tags     text[] NOT NULL DEFAULT '{}';
 
 -- Subscribe forms: a hosted page at /f/<id>, which also takes posts from a form embedded on
 -- another website.
-CREATE TABLE forms (
+CREATE TABLE IF NOT EXISTS forms (
     id              text PRIMARY KEY,
     name            text NOT NULL,
     title           text NOT NULL DEFAULT '',
@@ -69,4 +70,4 @@ INSERT INTO templates (id, name, category, mode, subject, design, html, is_stand
 </td></tr>
 </table>
 </body>
-</html>', true);
+</html>', true) ON CONFLICT (id) DO NOTHING;

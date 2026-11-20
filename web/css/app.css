@@ -168,6 +168,8 @@ input[type=checkbox], input[type=radio] { width: 17px; height: 17px; accent-colo
 .affix.has-btn input { padding-right: 48px; }
 .row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
 .row > .field { flex: 1; min-width: 170px; }
+/* Fields of unequal height (one has a hint under it): line the labels and inputs up at the top. */
+.row.top { align-items: flex-start; }
 .check { display: inline-flex; gap: 8px; align-items: center; font-weight: 400; margin: 0 16px 8px 0; cursor: pointer; text-transform: none; letter-spacing: 0; font-size: 14.5px; color: var(--text); }
 .inforow { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 12px; padding: 13px 16px; background: var(--subtle); font-size: 14.5px; flex-wrap: wrap; }
 .inforow .icon { color: var(--primary); }

@@ -39,6 +39,13 @@ type Service struct {
 	Now func() time.Time
 
 	wake chan struct{}
+
+	// PaymentEventSecret verifies GPC-Payment's signed events (PAYMENT_EVENT_SECRET); empty
+	// turns the hook off.
+	PaymentEventSecret string
+	// HelpdeskEventSecret verifies GPC-CSTicket's signed requests (HELPDESK_EVENT_SECRET); empty
+	// turns POST /hooks/helpdesk off.
+	HelpdeskEventSecret string
 }
 
 // New builds the service. secretKey is SETTINGS_ENCRYPTION_KEY (base64); link keys are signed

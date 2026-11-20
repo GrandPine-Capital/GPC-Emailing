@@ -86,6 +86,39 @@ hourly. **Dry-run mode** (Settings) records and tracks sends without delivering.
 | Tags | **Tags** lists, renames (merges) and removes tags. Campaigns go to lists and/or tags, minus excluded lists and tags |
 | Automations | Triggers include tag added / removed, added to / removed from a list, form submitted, subscription confirmed. Steps include add / remove tag, **Only continue if…** (skip the next steps or end), **Wait until…** (a goal with a time limit), start / stop another automation |
 
+## Transactional mail (receipts)
+
+Other systems ask Emailing to send one e-mail to one person about one thing: a receipt, a
+bank-transfer reminder, a refund notice. That mail is **not marketing**: it goes even to
+people who unsubscribed, makes no contact, carries no unsubscribe footer and is not tracked.
+It is sent from `BILLING_FROM`, with replies through the reply domain to the same name; a
+no-reply sender (`no-reply@…`, `noreply@…`) gets no Reply-To at all.
+
+| Payment event | Template key | Sent |
+|---|---|---|
+| `payment.succeeded` | `payment_receipt` | Receipt, with the link to the receipt page (event check-in QR) |
+| `payment.pending` | `payment_pending` | Bank-transfer instructions: account, reference, pay-by date |
+| `payment.refunded` | `payment_refunded` | Refund notice |
+| `subscription.charge_upcoming` | `subscription_charge_upcoming` | Plan first-charge notice, 3 days before a free trial ends: the date and amount of the first card charge, then yearly |
+
+GPC-Payment delivers its events to `POST /hooks/payments` (outbox target `emailing`, its
+`EMAILING_BASE_URL` and `EMAILING_EVENT_SECRET`), signed like its CRM events: header
+`sig` = hex HMAC-SHA256 of the body with `PAYMENT_EVENT_SECRET` (the same value). Each send
+is kept in `transactional`, once per event and order, so a retried event sends nothing new;
+a failed send is retried by the worker (1, 2, 4 … minutes, 8 tries), and SES bounces and
+complaints mark the row. Staff see them at `GET /api/transactional?source=payment&reference=<order id>`
+and resend with `POST /api/transactional/{id}/resend`.
+
+The **Transactional** page in the dashboard sets, for each of these e-mails, whether it is on
+and which template it uses, and the sender (empty = `BILLING_FROM` / `BILLING_FROM_NAME`); it
+lists everything sent, searchable by order number or address, with Resend. Admins change the
+settings; editors may resend. The templates are ordinary HTML templates (category
+*transactional*): edit the wording there. A template with a key cannot be deleted. Merge tags: `first_name`,
+`full_name`, `item`, `amount` (`RM 1,234.50`), `paid_at`, `payment_method`, `order_id`,
+`receipt_url`, `instructions_url`, `payment_reference`, `expires_at`, `bank_name`,
+`account_name`, `account_number`, `duitnow_id`, `refunded_at`, `charge_at` (`25 Nov 2026`),
+`charge_amount`, `company_address`.
+
 ## Run it locally
 
 ```bash
@@ -121,7 +154,9 @@ receiving region (SES does not receive mail in ap-southeast-5). Then:
    sending domain's DKIM records are already in place for `grandpine.com`.
 3. **Service environment** (the task definition sets it): `DATABASE_URL`,
    `SETTINGS_ENCRYPTION_KEY`, `PUBLIC_BASE_URL`, `KEYCLOAK_*`, `SES_REGION`, `MAIL_FROM`,
-   `SES_CONFIGURATION_SET`, `SES_EVENTS_QUEUE_URL`, `REPLY_DOMAIN`, `SES_INBOUND_QUEUE_URL`.
+   `SES_CONFIGURATION_SET`, `SES_EVENTS_QUEUE_URL`, `REPLY_DOMAIN`, `SES_INBOUND_QUEUE_URL`;
+   for receipts, `PAYMENT_EVENT_SECRET`, `BILLING_FROM` (e.g. `billing@grandpine.com`) and
+   optionally `BILLING_FROM_NAME`.
 
 A release keeps serving while the next one's migration runs: a read that meets a table the
 migration has just changed is retried once (`internal/store`), so adding columns is safe;
@@ -152,7 +187,7 @@ Campaigns over the daily cap carry on the next day by themselves.
 | `internal/catalog` | Countries, focus industries, trigger and step names; `catalog.json` is generated from `web/shared/catalog.js` by `node scripts/gen-catalog.js` |
 | `internal/httpapi` | API routes, public routes, staff sign-in |
 | `web/` | The dashboard. `js/backend.js` is the API client; templates are rendered to HTML in the browser (`shared/render-blocks.js`) and the server sends the saved HTML |
-| `db/migration` | `V1` schema, `V2` standard templates and (paused) example automations, `V3` opt-in, forms and tag audiences |
+| `db/migration` | `V1` schema, `V2` standard templates and (paused) example automations, `V3`–`V7` transactional mail, `V8` opt-in, forms and tag audiences |
 
 ## Moving from the Firebase build
 

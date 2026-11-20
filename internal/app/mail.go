@@ -33,6 +33,9 @@ type MailConfig struct {
 	// ReplyDomain receives replies (SES inbound): mail from name@grandpine.com carries
 	// Reply-To name@<ReplyDomain>; replies are recorded and forwarded to name@grandpine.com.
 	ReplyDomain string
+	// TransactionalFrom and TransactionalFromName send receipts and other transactional mail
+	// (BILLING_FROM, BILLING_FROM_NAME); empty uses the default sender and name.
+	TransactionalFrom, TransactionalFromName string
 }
 
 // ErrNoMailer: sending is not set up on the server.
@@ -168,6 +171,8 @@ type Outgoing struct {
 	Attachment []byte
 	// Force sends even in dry-run mode (test e-mails, team notifications, forwards).
 	Force bool
+	// NoReplyTo sends without a Reply-To (a no-reply sender).
+	NoReplyTo bool
 }
 
 // SendResult is what SES answered.
@@ -200,10 +205,10 @@ func (s *Service) Send(ctx context.Context, m Outgoing) (SendResult, error) {
 	if m.FromName == "" {
 		m.FromName = st.FromName
 	}
-	if m.ReplyTo == "" {
+	if m.ReplyTo == "" && !m.NoReplyTo {
 		m.ReplyTo = st.ReplyTo
 	}
-	if m.ReplyTo == "" {
+	if m.ReplyTo == "" && !m.NoReplyTo {
 		m.ReplyTo = s.replyAddress(m.FromEmail)
 	}
 	id, err := s.mail.Send(ctx, BuildMIME(m))
