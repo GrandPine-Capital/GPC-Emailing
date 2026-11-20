@@ -26,6 +26,8 @@ import (
 type InboundContact struct {
 	Email, Phone, Name, FirstName, LastName, Company, Website, Country, Industry, Source, ListID string
 	Tags                                                                                         []string
+	// Status of a contact this creates: subscribed unless set (pending for a double opt-in).
+	Status string
 }
 
 // ErrBadWebhookKey: the webhook key is missing or wrong.
@@ -89,12 +91,16 @@ func (s *Service) UpsertInboundContact(ctx context.Context, d InboundContact) (*
 		if d.ListID != "" {
 			lists = append(lists, d.ListID)
 		}
-		nc := Contact{ID: id, Email: email, Tags: tags, ListIDs: lists, Status: "subscribed", Source: source, PhoneKey: phone}
+		status := d.Status
+		if status == "" {
+			status = "subscribed"
+		}
+		nc := Contact{ID: id, Email: email, Tags: tags, ListIDs: lists, Status: status, Source: source, PhoneKey: phone}
 		nc.FirstName, nc.LastName, nc.Company = strings.TrimSpace(fields["first_name"]), strings.TrimSpace(fields["last_name"]), strings.TrimSpace(fields["company"])
 		nc.Website, nc.Country, nc.Industry, nc.Phone = strings.TrimSpace(fields["website"]), strings.TrimSpace(fields["country"]), strings.TrimSpace(fields["industry"]), strings.TrimSpace(fields["phone"])
 		_, err := s.db.Pool.Exec(ctx, `INSERT INTO contacts (id, email, first_name, last_name, company, website, phone, phone_key, country, industry, tags, list_ids, status, source, created_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'subscribed',$13,$14)`,
-			nc.ID, nc.Email, nc.FirstName, nc.LastName, nc.Company, nc.Website, nc.Phone, nc.PhoneKey, nc.Country, nc.Industry, nc.Tags, nc.ListIDs, nc.Source, s.now())
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+			nc.ID, nc.Email, nc.FirstName, nc.LastName, nc.Company, nc.Website, nc.Phone, nc.PhoneKey, nc.Country, nc.Industry, nc.Tags, nc.ListIDs, nc.Status, nc.Source, s.now())
 		if err != nil {
 			return nil, store.MapErr(err)
 		}
@@ -248,12 +254,31 @@ func (s *Service) HandleWebhook(ctx context.Context, params map[string]string, r
 	case string:
 		tags = core.SplitTags(t)
 	}
-	c, err := s.UpsertInboundContact(ctx, InboundContact{
+	in := InboundContact{
 		Email: str(body["email"]), Phone: str(body["phone"]), Name: str(body["name"]), FirstName: str(body["first_name"]),
 		LastName: str(body["last_name"]), Company: str(body["company"]), Website: str(body["website"]), Country: str(body["country"]),
 		Industry: str(body["industry"]), Source: str(body["source"]), ListID: str(body["list_id"]), Tags: tags,
-	})
-	if err != nil {
+	}
+	var c *Contact
+	if truthy(body["double_optin"]) || str(body["status"]) == "pending" {
+		// Ask the person to confirm first: the list and tags apply once they do.
+		lists := []string{}
+		if in.ListID != "" {
+			lists = append(lists, in.ListID)
+		}
+		in.ListID, in.Tags = "", nil
+		if !core.IsEmail(in.Email) {
+			return nil, userErr("a double opt-in needs an email")
+		}
+		res, err := s.Subscribe(ctx, SubscribeInput{Contact: in, ListIDs: lists, Tags: tags, DoubleOptIn: true})
+		if err != nil {
+			return nil, err
+		}
+		if res.Contact == nil {
+			return map[string]any{"ok": true, "status": res.Outcome}, nil
+		}
+		c = res.Contact
+	} else if c, err = s.UpsertInboundContact(ctx, in); err != nil {
 		return nil, err
 	}
 	event := str(body["event"])

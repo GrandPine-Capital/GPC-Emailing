@@ -480,7 +480,11 @@
   "bounced",
   "unsubscribed",
   "contact_added",
+  "list_removed",
   "tag_added",
+  "tag_removed",
+  "form_submitted",
+  "subscription_confirmed",
   "whatsapp_received",
   "webhook_received",
   "manual"
@@ -491,6 +495,10 @@
   "chatdaddy_contact",
   "wait",
   "stop_if",
+  "if_else",
+  "wait_until",
+  "start_automation",
+  "stop_automation",
   "add_tag",
   "remove_tag",
   "add_to_list",
@@ -507,6 +515,9 @@
   "not_clicked",
   "unsubscribed",
   "has_tag",
-  "not_has_tag"
+  "not_has_tag",
+  "in_list",
+  "not_in_list",
+  "subscribed"
  ]
 }

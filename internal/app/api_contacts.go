@@ -25,6 +25,30 @@ func (s *Service) hasActiveTrigger(ctx context.Context, trigger string) bool {
 
 type pair struct{ contact, value string }
 
+// contactStatuses: pending waits for a double opt-in confirmation; complained marked an e-mail
+// as spam. Only subscribed contacts are mailed.
+var contactStatuses = []string{"subscribed", "pending", "unsubscribed", "bounced", "complained"}
+
+func isStatus(v string) bool { return contains(contactStatuses, v) }
+
+func (s *Service) fireTagRemoved(ctx context.Context, items []pair) {
+	if len(items) == 0 || !s.hasActiveTrigger(ctx, "tag_removed") {
+		return
+	}
+	for _, it := range items {
+		s.Fire(ctx, "tag_removed", Event{ContactID: it.contact, Tag: it.value})
+	}
+}
+
+func (s *Service) fireListRemoved(ctx context.Context, items []pair) {
+	if len(items) == 0 || !s.hasActiveTrigger(ctx, "list_removed") {
+		return
+	}
+	for _, it := range items {
+		s.Fire(ctx, "list_removed", Event{ContactID: it.contact, ListID: it.value})
+	}
+}
+
 func (s *Service) fireContactAdded(ctx context.Context, items []pair) {
 	if len(items) == 0 || !s.hasActiveTrigger(ctx, "contact_added") {
 		return
@@ -165,8 +189,8 @@ func (s *Service) UpsertContacts(ctx context.Context, list []ContactInput, listI
 			}
 		}
 		if in.Status != "" && (overwrite || old == nil) {
-			if in.Status != "subscribed" && in.Status != "unsubscribed" && in.Status != "bounced" {
-				return res, userErr("Status must be subscribed, unsubscribed or bounced")
+			if !isStatus(in.Status) {
+				return res, userErr("Status must be one of " + strings.Join(contactStatuses, ", "))
 			}
 			c.Status = in.Status
 		}
@@ -324,8 +348,8 @@ func (s *Service) UpdateContact(ctx context.Context, id string, body map[string]
 	}
 	if v, ok := body["status"]; ok {
 		st := strings.TrimSpace(str(v))
-		if st != "subscribed" && st != "unsubscribed" && st != "bounced" {
-			return nil, userErr("Status must be subscribed, unsubscribed or bounced")
+		if !isStatus(st) {
+			return nil, userErr("Status must be one of " + strings.Join(contactStatuses, ", "))
 		}
 		next.Status = st
 	}
@@ -357,10 +381,20 @@ func (s *Service) UpdateContact(ctx context.Context, id string, body map[string]
 		next.Email = newID
 	}
 	next.PhoneKey = core.PhoneKey(next.Phone, s.Settings(ctx).DefaultCountryCode)
-	var newTags []pair
+	var newTags, goneTags, goneLists []pair
 	for _, t := range next.Tags {
 		if !c.HasTag(t) {
 			newTags = append(newTags, pair{newID, t})
+		}
+	}
+	for _, t := range c.Tags {
+		if !contains(next.Tags, t) {
+			goneTags = append(goneTags, pair{newID, t})
+		}
+	}
+	for _, l := range c.ListIDs {
+		if !contains(next.ListIDs, l) {
+			goneLists = append(goneLists, pair{newID, l})
 		}
 	}
 	err = s.db.InTx(ctx, func(tx pgx.Tx) error {
@@ -394,6 +428,8 @@ func (s *Service) UpdateContact(ctx context.Context, id string, body map[string]
 	}
 	s.fireContactAdded(ctx, added)
 	s.fireTagAdded(ctx, newTags)
+	s.fireTagRemoved(ctx, goneTags)
+	s.fireListRemoved(ctx, goneLists)
 	return store.One(ctx, s.db.Pool, `SELECT * FROM contacts WHERE id = $1`, newID)
 }
 
@@ -426,9 +462,19 @@ func (s *Service) BulkContacts(ctx context.Context, action string, contactIDs []
 	case "delete":
 		q = `DELETE FROM contacts WHERE id = ANY($1)`
 	case "unsubscribe":
-		q = `UPDATE contacts SET status = 'unsubscribed' WHERE id = ANY($1)`
+		q = `UPDATE contacts SET status = 'unsubscribed', unsubscribed_at = now(), pending_optin = NULL WHERE id = ANY($1) AND status <> 'complained'`
 	case "resubscribe":
-		q = `UPDATE contacts SET status = 'subscribed' WHERE id = ANY($1)`
+		// Never back onto the list for someone who marked our mail as spam.
+		q = `UPDATE contacts SET status = 'subscribed', pending_optin = NULL WHERE id = ANY($1) AND status <> 'complained'`
+	case "send_optin":
+		n, err := s.RequestOptIn(ctx, contactIDs)
+		return n, err
+	case "remove_tag":
+		if strings.TrimSpace(tag) == "" {
+			return 0, userErr("Enter a tag")
+		}
+		n, err := s.removeTag(ctx, contactIDs, strings.TrimSpace(tag))
+		return n, err
 	case "add_tag":
 		if strings.TrimSpace(tag) == "" {
 			return 0, userErr("Enter a tag")
@@ -447,7 +493,7 @@ func (s *Service) BulkContacts(ctx context.Context, action string, contactIDs []
 		s.fireTagAdded(ctx, tagged)
 		return len(contactIDs), nil
 	case "remove_from_list":
-		q, args = `UPDATE contacts SET list_ids = array_remove(list_ids, $2) WHERE id = ANY($1)`, []any{contactIDs, listID}
+		return len(contactIDs), s.RemoveFromList(ctx, contactIDs, listID)
 	default:
 		return 0, userErr("Unknown action " + action)
 	}
@@ -512,7 +558,8 @@ func (s *Service) ExportContacts(ctx context.Context, qp map[string]string) (map
 			break
 		}
 	}
-	cols := []string{"email", "first_name", "last_name", "company", "website", "phone", "country", "industry", "tags", "status", "source", "replied_at", "created_at"}
+	cols := []string{"email", "first_name", "last_name", "company", "website", "phone", "country", "industry", "tags", "status", "source", "replied_at",
+		"confirmed_at", "unsubscribed_at", "unsubscribe_reason", "created_at"}
 	var b strings.Builder
 	w := csv.NewWriter(&b)
 	_ = w.Write(cols)
@@ -541,10 +588,16 @@ func (s *Service) Lists(ctx context.Context) ([]store.Row, error) {
 }
 
 func (s *Service) CreateList(ctx context.Context, name, description string) (store.Row, error) {
+	return s.CreateListWith(ctx, name, description, false)
+}
+
+// CreateListWith also says whether subscribers may join and leave the list on the preference page.
+func (s *Service) CreateListWith(ctx context.Context, name, description string, public bool) (store.Row, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, userErr("Name is required")
 	}
-	return store.One(ctx, s.db.Pool, `INSERT INTO lists (id, name, description, created_at) VALUES ($1,$2,$3,$4) RETURNING *`, ids.New(), strings.TrimSpace(name), description, s.now())
+	return store.One(ctx, s.db.Pool, `INSERT INTO lists (id, name, description, is_public, created_at) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+		ids.New(), strings.TrimSpace(name), description, public, s.now())
 }
 
 func (s *Service) UpdateList(ctx context.Context, id string, body map[string]any) (store.Row, error) {
@@ -561,12 +614,20 @@ func (s *Service) UpdateList(ctx context.Context, id string, body map[string]any
 			return nil, err
 		}
 	}
+	if v, ok := body["is_public"]; ok && v != nil {
+		if err := store.Affected(s.db.Pool.Exec(ctx, `UPDATE lists SET is_public = $2 WHERE id = $1`, id, truthy(v))); err != nil {
+			return nil, err
+		}
+	}
 	return store.One(ctx, s.db.Pool, `SELECT * FROM lists WHERE id = $1`, id)
 }
 
 func (s *Service) DeleteList(ctx context.Context, id string) error {
 	return s.db.InTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `UPDATE contacts SET list_ids = array_remove(list_ids, $1) WHERE $1 = ANY(list_ids)`, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE forms SET list_ids = array_remove(list_ids, $1) WHERE $1 = ANY(list_ids)`, id); err != nil {
 			return err
 		}
 		return store.Affected(tx.Exec(ctx, `DELETE FROM lists WHERE id = $1`, id))
@@ -592,7 +653,18 @@ func (s *Service) AddToList(ctx context.Context, contactIDs []string, listID str
 	return len(added), nil
 }
 
+// RemoveFromList takes contacts off a list and fires list_removed for those who were on it.
 func (s *Service) RemoveFromList(ctx context.Context, contactIDs []string, listID string) error {
-	_, err := s.db.Pool.Exec(ctx, `UPDATE contacts SET list_ids = array_remove(list_ids, $2) WHERE id = ANY($1)`, contactIDs, listID)
-	return err
+	rows, err := store.Structs[struct {
+		ID string `db:"id"`
+	}](ctx, s.db.Pool, `UPDATE contacts SET list_ids = array_remove(list_ids, $2) WHERE id = ANY($1) AND $2 = ANY(list_ids) RETURNING id`, contactIDs, listID)
+	if err != nil {
+		return err
+	}
+	var gone []pair
+	for _, r := range rows {
+		gone = append(gone, pair{r.ID, listID})
+	}
+	s.fireListRemoved(ctx, gone)
+	return nil
 }

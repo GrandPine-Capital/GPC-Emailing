@@ -99,7 +99,7 @@ function mapRow(row) {
 
 // ------------------------------------------------------------------ calls handled here
 function previewHtml(html, subject) {
-  const vars = { ...Core.contactVars(Core.SAMPLE_CONTACT), unsubscribe_url: '#unsubscribe', sender_name: 'Your Company', company_address: '1 Example Street' };
+  const vars = { ...Core.contactVars(Core.SAMPLE_CONTACT), unsubscribe_url: '#unsubscribe', manage_subscription_url: '#preferences', view_online_url: '#view-online', confirm_url: '#confirm', sender_name: 'Your Company', company_address: '1 Example Street' };
   return { preview: Core.merge(html, vars, { html: true }), subject: Core.merge(subject || '', vars) };
 }
 

@@ -1,8 +1,9 @@
 # GPC Emailing
 
-E-mail marketing for **GrandPine Capital**: contacts and lists, a drag-and-drop and HTML
-template builder, campaigns with open/click/reply tracking, automations (email, WhatsApp,
-ChatDaddy, webhooks), auto-replies to incoming mail, inbound webhooks and a lead finder.
+E-mail marketing for **GrandPine Capital**: contacts, lists and tags, subscribe forms with
+double opt-in, a drag-and-drop and HTML template builder, campaigns (by list and tag) with
+open/click/reply tracking, automations (email, tagging, WhatsApp, ChatDaddy, webhooks),
+auto-replies to incoming mail, inbound webhooks and a lead finder.
 
 A Go service (`cmd/emailing`) serves the dashboard (`web/`, plain HTML and JavaScript), its
 API under `/api`, the public routes that e-mails and other apps reach, and runs the
@@ -55,7 +56,8 @@ Staff sign in with their GrandPine account; access is granted in the IAM Workspa
                         └ forwards replies ─► name@<sending domain> (staff mailbox)
 ```
 
-The worker steps, in order, each tick (`internal/app/worker.go`): launch due campaigns and
+The worker steps, in order, each tick (`internal/app/worker.go`): send the opt-in confirmation
+e-mails that are owed; launch due campaigns and
 send queued mail within the daily limit and the SES quota; apply SES bounces (permanent →
 contact bounced) and complaints (→ unsubscribed); read mail received on the reply domain
 (replies, delivery reports, "unsubscribe" requests, auto-reply rules, the `email_received`
@@ -70,6 +72,19 @@ replies there instead, and they are not tracked. Forwarded copies carry
 
 Mail never fails for lack of SES: without it, queued mail waits and automation sends retry
 hourly. **Dry-run mode** (Settings) records and tracks sends without delivering.
+
+## Opt-in, opt-out and tags
+
+| | |
+|---|---|
+| Subscribe forms | **Subscribe forms**: each has a hosted page at `/f/<id>`; the same address takes the post of a form embedded on another site (HTML snippet in the dashboard), or JSON from a script. A hidden field and a per-address rate limit keep bots out |
+| Double opt-in | The sign-up is `pending`, and unmailed, until the person uses the link in the confirmation e-mail (`/c`; the page asks, a button confirms, so mail scanners confirm nothing). The form's lists and tags apply at that moment. The e-mail is a template (`{{confirm_url}}`), chosen in Settings. Webhooks can ask for it with `"double_optin": true` |
+| Contact status | `subscribed`, `pending`, `unsubscribed`, `bounced`, `complained` (a spam complaint; never mailed or re-subscribed). Only `subscribed` contacts are mailed |
+| Unsubscribe | `/u` (asks why, optionally; the reason is kept on the contact), one-click `/u1`, or a reply saying "unsubscribe" |
+| Preference page | `/m`: the subscriber's name and the **public** lists they may join or leave. `{{manage_subscription_url}}`; a link is added to the footer |
+| View in browser | `/v`, `{{view_online_url}}`: the e-mail re-rendered for its recipient, served sandboxed |
+| Tags | **Tags** lists, renames (merges) and removes tags. Campaigns go to lists and/or tags, minus excluded lists and tags |
+| Automations | Triggers include tag added / removed, added to / removed from a list, form submitted, subscription confirmed. Steps include add / remove tag, **Only continue if…** (skip the next steps or end), **Wait until…** (a goal with a time limit), start / stop another automation |
 
 ## Run it locally
 
@@ -133,7 +148,7 @@ Campaigns over the daily cap carry on the next day by themselves.
 | `internal/catalog` | Countries, focus industries, trigger and step names; `catalog.json` is generated from `web/shared/catalog.js` by `node scripts/gen-catalog.js` |
 | `internal/httpapi` | API routes, public routes, staff sign-in |
 | `web/` | The dashboard. `js/backend.js` is the API client; templates are rendered to HTML in the browser (`shared/render-blocks.js`) and the server sends the saved HTML |
-| `db/migration` | `V1` schema, `V2` standard templates and (paused) example automations |
+| `db/migration` | `V1` schema, `V2` standard templates and (paused) example automations, `V3` opt-in, forms and tag audiences |
 
 ## Moving from the Firebase build
 

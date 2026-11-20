@@ -60,7 +60,11 @@
     bounced: { label: 'Email bounced', group: 'Email', icon: 'alert', description: 'When an email to the contact bounces' },
     unsubscribed: { label: 'Contact unsubscribed', group: 'Email', icon: 'user-x', description: 'When the contact unsubscribes from your emails' },
     contact_added: { label: 'Added to a list', group: 'Contacts', icon: 'user-plus', description: 'When a contact is added to a list (import, form, lead finder…)' },
+    list_removed: { label: 'Removed from a list', group: 'Contacts', icon: 'list-minus', description: 'When a contact is taken off a list, or leaves it on the preference page' },
     tag_added: { label: 'Tag added', group: 'Contacts', icon: 'tag', description: 'When a tag is added to a contact' },
+    tag_removed: { label: 'Tag removed', group: 'Contacts', icon: 'tag', description: 'When a tag is taken off a contact' },
+    form_submitted: { label: 'Form submitted', group: 'Opt-in', icon: 'edit', description: 'When someone signs up through one of your subscribe forms (after they confirm, for double opt-in forms)' },
+    subscription_confirmed: { label: 'Subscription confirmed', group: 'Opt-in', icon: 'check-circle', description: 'When a contact confirms their subscription (double opt-in)' },
     whatsapp_received: { label: 'WhatsApp message received', group: 'WhatsApp', icon: 'whatsapp', description: 'When a contact messages you on WhatsApp (via ChatDaddy webhook)' },
     webhook_received: { label: 'Webhook received', group: 'Integrations', icon: 'webhook', description: 'When another app (form, CRM, Zapier, ChatDaddy…) posts to your webhook URL' },
     manual: { label: 'Manual enrolment', group: 'Contacts', icon: 'play', description: 'Only when you enrol contacts or a list yourself' },
@@ -72,6 +76,10 @@
     chatdaddy_contact: { label: 'Sync contact to ChatDaddy', group: 'WhatsApp', icon: 'refresh', description: 'Create/update the contact in ChatDaddy with tags' },
     wait: { label: 'Wait', group: 'Timing & logic', icon: 'clock', description: 'Pause for minutes, hours or days' },
     stop_if: { label: 'Stop if…', group: 'Timing & logic', icon: 'stop', description: 'End the automation when a condition is met (replied, opened, has tag…)' },
+    if_else: { label: 'Only continue if…', group: 'Timing & logic', icon: 'filter', description: 'Check a condition (tag, list, opened, clicked…): carry on if it holds, otherwise skip the next steps or end' },
+    wait_until: { label: 'Wait until… (goal)', group: 'Timing & logic', icon: 'check-circle', description: 'Hold the contact until they open, click, reply or get a tag, up to a time limit' },
+    start_automation: { label: 'Start another automation', group: 'Timing & logic', icon: 'play', description: 'Enrol the contact in another automation' },
+    stop_automation: { label: 'Stop other automations', group: 'Timing & logic', icon: 'x', description: 'Take the contact out of another automation, or all others' },
     add_tag: { label: 'Add tag', group: 'Contact', icon: 'tag', description: 'Add a tag to the contact' },
     remove_tag: { label: 'Remove tag', group: 'Contact', icon: 'tag', description: 'Remove a tag from the contact' },
     add_to_list: { label: 'Add to list', group: 'Contact', icon: 'list-plus', description: 'Add the contact to a list' },
@@ -90,9 +98,12 @@
     unsubscribed: 'has unsubscribed or bounced',
     has_tag: 'has the tag…',
     not_has_tag: 'does NOT have the tag…',
+    in_list: 'is on the list…',
+    not_in_list: 'is NOT on the list…',
+    subscribed: 'is subscribed',
   };
 
-  const MERGE_TAGS = ['first_name', 'last_name', 'full_name', 'email', 'company', 'website', 'phone', 'country', 'industry', 'sender_name', 'company_address', 'unsubscribe_url'];
+  const MERGE_TAGS = ['first_name', 'last_name', 'full_name', 'email', 'company', 'website', 'phone', 'country', 'industry', 'sender_name', 'company_address', 'unsubscribe_url', 'manage_subscription_url', 'view_online_url'];
 
   function byCode(code) {
     const c = String(code || '').toUpperCase();

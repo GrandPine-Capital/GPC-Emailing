@@ -28,6 +28,7 @@ type Event struct {
 	MessageID      string `json:"messageId,omitempty"`
 	FromAutomation string `json:"fromAutomation,omitempty"`
 	ListID         string `json:"listId,omitempty"`
+	FormID         string `json:"formId,omitempty"`
 	Tag            string `json:"tag,omitempty"`
 	URL            string `json:"url,omitempty"`
 	Text           string `json:"text,omitempty"`
@@ -52,6 +53,9 @@ func matches(cfg map[string]any, ev Event) bool {
 		return false
 	}
 	if has(cfg["list_id"]) && str(cfg["list_id"]) != ev.ListID {
+		return false
+	}
+	if has(cfg["form_id"]) && str(cfg["form_id"]) != ev.FormID {
 		return false
 	}
 	if has(cfg["tag"]) && str(cfg["tag"]) != ev.Tag {
@@ -159,8 +163,10 @@ func (s *Service) stopRunsFor(ctx context.Context, contactID string) {
 	}
 }
 
-// conditionMet evaluates a stop_if condition since the run started.
-func (s *Service) conditionMet(ctx context.Context, condition string, run Run, tag string) (bool, error) {
+// conditionMet evaluates a step's condition (stop_if, if_else, wait_until): activity counts
+// since the run started; step names the tag or list it asks about.
+func (s *Service) conditionMet(ctx context.Context, condition string, run Run, step map[string]any) (bool, error) {
+	tag, listID := str(step["tag"]), str(step["list_id"])
 	c, err := s.contact(ctx, s.db.Pool, run.ContactID)
 	if IsNotFound(err) {
 		c = &Contact{}
@@ -176,7 +182,7 @@ func (s *Service) conditionMet(ctx context.Context, condition string, run Run, t
 	case "replied":
 		return c.RepliedAt != nil && !c.RepliedAt.Before(since), nil
 	case "not_replied":
-		ok, err := s.conditionMet(ctx, "replied", run, tag)
+		ok, err := s.conditionMet(ctx, "replied", run, step)
 		return !ok, err
 	case "opened":
 		return anyMsg("opened_at")
@@ -194,6 +200,12 @@ func (s *Service) conditionMet(ctx context.Context, condition string, run Run, t
 		return c.HasTag(tag), nil
 	case "not_has_tag":
 		return !c.HasTag(tag), nil
+	case "in_list":
+		return contains(c.ListIDs, listID), nil
+	case "not_in_list":
+		return !contains(c.ListIDs, listID), nil
+	case "subscribed":
+		return c.Status == "subscribed", nil
 	}
 	return false, nil
 }
@@ -202,6 +214,18 @@ type stepResult struct {
 	note      string
 	stop      bool
 	waitUntil *time.Time
+	// skip is how many of the following steps to pass over (if_else).
+	skip int
+}
+
+// conditionLabel words a condition for the run log.
+func conditionLabel(step map[string]any) string {
+	cond := str(step["condition"])
+	switch cond {
+	case "has_tag", "not_has_tag":
+		return cond + " " + str(step["tag"])
+	}
+	return cond
 }
 
 var unitDur = map[string]time.Duration{"minutes": time.Minute, "hours": time.Hour, "days": 24 * time.Hour}
@@ -355,7 +379,7 @@ func (s *Service) executeStep(ctx context.Context, step map[string]any, run *Run
 
 	case "stop_if":
 		cond := str(step["condition"])
-		met, err := s.conditionMet(ctx, cond, *run, str(step["tag"]))
+		met, err := s.conditionMet(ctx, cond, *run, step)
 		if err != nil {
 			return stepResult{}, err
 		}
@@ -363,6 +387,96 @@ func (s *Service) executeStep(ctx context.Context, step map[string]any, run *Run
 			return stepResult{stop: true, note: "stopped: " + cond}, nil
 		}
 		return stepResult{note: "condition " + cond + " not met"}, nil
+
+	case "if_else":
+		// Carry on when the condition holds; otherwise end here, or pass over the next steps.
+		met, err := s.conditionMet(ctx, str(step["condition"]), *run, step)
+		if err != nil {
+			return stepResult{}, err
+		}
+		label := conditionLabel(step)
+		if met {
+			return stepResult{note: "yes: " + label}, nil
+		}
+		if str(step["otherwise"]) == "stop" {
+			return stepResult{stop: true, note: "no: " + label + ", ended"}, nil
+		}
+		n := max(1, int(num(step["skip"])))
+		return stepResult{skip: n, note: fmt.Sprintf("no: %s, skipped %d step(s)", label, n)}, nil
+
+	case "wait_until":
+		// A goal: hold the contact here until the condition holds, or the time limit passes.
+		met, err := s.conditionMet(ctx, str(step["condition"]), *run, step)
+		if err != nil {
+			return stepResult{}, err
+		}
+		label := conditionLabel(step)
+		if met {
+			delete(rc, "until_step")
+			delete(rc, "until_deadline")
+			return stepResult{note: "reached: " + label}, nil
+		}
+		var deadline time.Time
+		if us, ok := rc["until_step"]; ok && int(num(us)) == run.StepIndex {
+			deadline, _ = time.Parse(time.RFC3339, str(rc["until_deadline"]))
+		}
+		if deadline.IsZero() {
+			unit := str(step["unit"])
+			d, ok := unitDur[unit]
+			if !ok {
+				d = unitDur["days"]
+			}
+			amount := num(step["amount"])
+			if amount <= 0 {
+				amount = 7
+			}
+			deadline = s.now().Add(time.Duration(amount * float64(d)))
+			rc["until_step"], rc["until_deadline"] = run.StepIndex, deadline.Format(time.RFC3339)
+		}
+		if !s.now().Before(deadline) {
+			delete(rc, "until_step")
+			delete(rc, "until_deadline")
+			if str(step["on_timeout"]) == "continue" {
+				return stepResult{note: "time limit passed without " + label + ", carried on"}, nil
+			}
+			return stepResult{stop: true, note: "time limit passed without " + label}, nil
+		}
+		next := s.now().Add(10 * time.Minute)
+		if deadline.Before(next) {
+			next = deadline
+		}
+		return stepResult{waitUntil: &next, note: "waiting until " + label}, nil
+
+	case "start_automation":
+		target, err := store.Struct[Automation](ctx, s.db.Pool, `SELECT * FROM automations WHERE id = $1`, str(step["automation_id"]))
+		if IsNotFound(err) {
+			return stepResult{note: "skipped: that automation no longer exists"}, nil
+		} else if err != nil {
+			return stepResult{}, err
+		}
+		if target.ID == run.AutomationID {
+			return stepResult{note: "skipped: an automation cannot start itself"}, nil
+		}
+		active, err := store.Count(ctx, s.db.Pool, `SELECT count(*) FROM runs WHERE automation_id = $1 AND contact_id = $2 AND status = 'active'`, target.ID, c.ID)
+		if err != nil {
+			return stepResult{}, err
+		}
+		if active > 0 {
+			return stepResult{note: "already in " + target.Name}, nil
+		}
+		if _, err := s.startRun(ctx, s.db.Pool, target, c.ID, "automation", Event{ContactID: c.ID, FromAutomation: run.AutomationID}); err != nil {
+			return stepResult{}, err
+		}
+		return stepResult{note: "started " + target.Name}, nil
+
+	case "stop_automation":
+		// One other automation, or (none chosen) every other one the contact is in.
+		tag, err := s.db.Pool.Exec(ctx, `UPDATE runs SET status = 'stopped', updated_at = $4 WHERE contact_id = $1 AND status = 'active'
+			AND automation_id <> $2 AND ($3 = '' OR automation_id = $3)`, c.ID, run.AutomationID, str(step["automation_id"]), s.now())
+		if err != nil {
+			return stepResult{}, err
+		}
+		return stepResult{note: fmt.Sprintf("stopped %d other run(s)", tag.RowsAffected())}, nil
 
 	case "add_tag":
 		tag := str(step["tag"])
@@ -377,6 +491,9 @@ func (s *Service) executeStep(ctx context.Context, step map[string]any, run *Run
 	case "remove_tag":
 		if _, err := s.db.Pool.Exec(ctx, `UPDATE contacts SET tags = array_remove(tags, $2) WHERE id = $1`, c.ID, str(step["tag"])); err != nil {
 			return stepResult{}, err
+		}
+		if c.HasTag(str(step["tag"])) {
+			s.Fire(ctx, "tag_removed", Event{ContactID: c.ID, Tag: str(step["tag"]), FromAutomation: run.AutomationID})
 		}
 		return stepResult{note: "tag -" + str(step["tag"])}, nil
 
@@ -394,13 +511,16 @@ func (s *Service) executeStep(ctx context.Context, step map[string]any, run *Run
 		if _, err := s.db.Pool.Exec(ctx, `UPDATE contacts SET list_ids = array_remove(list_ids, $2) WHERE id = $1`, c.ID, str(step["list_id"])); err != nil {
 			return stepResult{}, err
 		}
+		if contains(c.ListIDs, str(step["list_id"])) {
+			s.Fire(ctx, "list_removed", Event{ContactID: c.ID, ListID: str(step["list_id"]), FromAutomation: run.AutomationID})
+		}
 		return stepResult{note: "removed from list"}, nil
 
 	case "update_field":
 		field, value := str(step["field"]), str(step["value"])
 		if field == "status" {
-			if value != "subscribed" && value != "unsubscribed" && value != "bounced" {
-				return stepResult{}, fmt.Errorf("status must be subscribed, unsubscribed or bounced, not %q", value)
+			if !isStatus(value) {
+				return stepResult{}, fmt.Errorf("status must be one of %s, not %q", strings.Join(contactStatuses, ", "), value)
 			}
 		} else if !core.IsContactField(field) {
 			return stepResult{}, fmt.Errorf("cannot update field %s", field)
@@ -541,7 +661,7 @@ func (s *Service) processRun(ctx context.Context, run Run, a Automation) error {
 		if r.waitUntil != nil {
 			return save("", r.waitUntil)
 		}
-		index++
+		index += 1 + r.skip
 	}
 	return save("", nil)
 }

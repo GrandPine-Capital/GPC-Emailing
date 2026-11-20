@@ -30,6 +30,14 @@ type Settings struct {
 	WhatsAppPhoneNumberID    string `json:"whatsapp_phone_number_id"`
 	WhatsAppTemplateLanguage string `json:"whatsapp_template_language"`
 	Timezone                 string `json:"timezone"`
+	// Opt-in and opt-out: the double opt-in e-mail, where a confirmed subscriber lands, and
+	// whether the unsubscribe page asks why.
+	OptinTemplateID        string `json:"optin_template_id"`
+	OptinSubject           string `json:"optin_subject"`
+	OptinConfirmedMessage  string `json:"optin_confirmed_message"`
+	OptinRedirectURL       string `json:"optin_redirect_url"`
+	AskUnsubscribeReason   bool   `json:"ask_unsubscribe_reason"`
+	UnsubscribeRedirectURL string `json:"unsubscribe_redirect_url"`
 }
 
 func defaultSettings() Settings {
@@ -37,6 +45,7 @@ func defaultSettings() Settings {
 		FromName: "My Company", DailyLimit: 100, PerRunLimit: 40,
 		CrawlerUserAgent: "EmailingLeadFinder/1.0 (+GrandPine Capital)", WhatsAppProvider: "chatdaddy",
 		ChatDaddyAccountID: "random", WhatsAppTemplateLanguage: "en", Timezone: "Asia/Kuala_Lumpur",
+		OptinTemplateID: "std-confirm-subscription", AskUnsubscribeReason: true,
 	}
 }
 
@@ -47,6 +56,8 @@ var textSettings = map[string]bool{
 	"from_name": true, "reply_to": true, "company_address": true, "crawler_user_agent": true, "default_from_email": true,
 	"default_country_code": true, "timezone": true, "whatsapp_provider": true, "chatdaddy_account_id": true,
 	"whatsapp_phone_number_id": true, "whatsapp_template_language": true,
+	"optin_template_id": true, "optin_subject": true, "optin_confirmed_message": true, "optin_redirect_url": true,
+	"unsubscribe_redirect_url": true,
 }
 
 // Settings reads the workspace settings over the defaults.
@@ -200,7 +211,7 @@ func (s *Service) UpdateSettings(ctx context.Context, in map[string]any) error {
 		case k == "daily_limit" || k == "per_run_limit":
 			n, _ := strconv.Atoi(strings.TrimSpace(str(v)))
 			app[k] = max(0, n)
-		case k == "dry_run":
+		case k == "dry_run" || k == "ask_unsubscribe_reason":
 			app[k] = v == true || v == "true"
 		case textSettings[k]:
 			app[k] = strings.TrimSpace(str(v))
@@ -212,6 +223,11 @@ func (s *Service) UpdateSettings(ctx context.Context, in map[string]any) error {
 	if tz, ok := app["timezone"].(string); ok && tz != "" {
 		if _, err := time.LoadLocation(tz); err != nil {
 			return userErr("Unknown time zone " + tz + " (use a name such as Asia/Kuala_Lumpur)")
+		}
+	}
+	for _, k := range []string{"optin_redirect_url", "unsubscribe_redirect_url"} {
+		if u, ok := app[k].(string); ok && u != "" && !isWebURL(u) {
+			return userErr("Redirect addresses must start with https:// or http://")
 		}
 	}
 	if err := s.mergeDoc(ctx, s.db.Pool, "app", app); err != nil {

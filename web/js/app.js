@@ -85,7 +85,7 @@ const App = (() => {
   };
 
   const statusBadge = (s) => {
-    const color = { sent: 'green', active: 'green', subscribed: 'green', completed: 'green', done: 'green', sending: 'blue', running: 'blue', scheduled: 'yellow', paused: 'yellow', draft: '', stopped: '', unsubscribed: 'red', failed: 'red', bounced: 'red', queued: 'blue', skipped: '' }[s] ?? '';
+    const color = { sent: 'green', active: 'green', subscribed: 'green', completed: 'green', done: 'green', sending: 'blue', running: 'blue', scheduled: 'yellow', paused: 'yellow', pending: 'yellow', complained: 'red', draft: '', stopped: '', unsubscribed: 'red', failed: 'red', bounced: 'red', queued: 'blue', skipped: '' }[s] ?? '';
     return `<span class="badge ${color}">${esc(s)}</span>`;
   };
 

@@ -32,7 +32,7 @@
         <div class="actions"><a class="btn" href="#/leads">${App.icon('search', 17)}Find leads</a><a class="btn" href="#/templates/new-dragdrop">${App.icon('templates', 17)}New template</a><a class="btn primary" href="#/campaigns/new">${App.icon('rocket', 17)}New campaign</a></div></div>
       ${workerBanner(meta)}${dryRunBanner(meta)}
       <div class="grid cols-4">
-        <div class="card stat"><div class="label">Contacts</div><div class="value">${s.contacts}</div><div class="sub">${s.subscribed} subscribed · ${s.lists} lists</div></div>
+        <div class="card stat"><div class="label">Contacts</div><div class="value">${s.contacts}</div><div class="sub">${s.subscribed} subscribed${s.pending ? ` · ${s.pending} awaiting confirmation` : ''} · ${s.lists} lists</div></div>
         <div class="card stat"><div class="label">Sent (30 days)</div><div class="value">${s.sent30}</div><div class="sub">${s.queued} queued now</div></div>
         <div class="card stat"><div class="label">Open rate</div><div class="value">${pct(s.openRate)}</div><div class="sub">Click rate ${pct(s.clickRate)}</div></div>
         <div class="card stat"><div class="label">Reply rate</div><div class="value">${pct(s.replyRate)}</div><div class="sub">${s.replied30} replies · ${s.activeAutomations} active automations</div></div>
@@ -50,7 +50,7 @@
       <div class="card"><h2>Getting started</h2>
         <ol style="margin:0;padding-left:20px;line-height:2">
           <li>Review the sender, limits and sender identities in <a href="#/settings">Settings</a>.</li>
-          <li>Import contacts from CSV in <a href="#/contacts">Contacts</a>, or discover leads by country &amp; industry in <a href="#/leads">Lead Finder</a>.</li>
+          <li>Import contacts from CSV in <a href="#/contacts">Contacts</a>, collect sign-ups with a <a href="#/forms">subscribe form</a> (double opt-in), or discover leads by country &amp; industry in <a href="#/leads">Lead Finder</a>.</li>
           <li>Design an email with the <a href="#/templates">drag &amp; drop builder or HTML editor</a> (standard templates included).</li>
           <li>Create a <a href="#/campaigns">campaign</a>, send a test, then send now or schedule.</li>
           <li>Activate <a href="#/automations">automations</a> for follow-ups after sending and auto-responses after replies.</li>
@@ -103,11 +103,15 @@
   });
 
   route(/^#\/campaigns\/(new|[\w-]+)(?:\?template=([\w-]+))?$/, async (root, id, presetTemplate) => {
-    const [meta, templates, lists, settings] = await Promise.all([App.getMeta(), api.get('/templates'), api.get('/lists'), api.get('/settings')]);
+    const [meta, templates, lists, settings, facets] = await Promise.all([App.getMeta(), api.get('/templates'), api.get('/lists'), api.get('/settings'), api.get('/contacts/facets')]);
     let c = id === 'new'
-      ? { id: null, name: '', subject: '', preheader: '', template_id: presetTemplate || '', from_name: '', from_email: '', reply_to: '', list_ids: [], status: 'draft' }
+      ? { id: null, name: '', subject: '', preheader: '', template_id: presetTemplate || '', from_name: '', from_email: '', reply_to: '', list_ids: [], tags: [], exclude_list_ids: [], exclude_tags: [], status: 'draft' }
       : await api.get(`/campaigns/${id}`);
     if (id === 'new' && presetTemplate) c.subject = templates.find((t) => String(t.id) === presetTemplate)?.subject || '';
+    if (id === 'new' && sessionStorage.getItem('campaign-tag')) {
+      c.tags = [sessionStorage.getItem('campaign-tag')];
+      sessionStorage.removeItem('campaign-tag');
+    }
     if (['launching', 'sending', 'sent', 'paused'].includes(c.status)) return renderReport(root, c);
     root.innerHTML = `
       <div class="page-head"><div><a class="back" href="#/campaigns">${App.icon('chevron-left', 16)}Campaigns</a><h1>${c.id ? esc(c.name) : 'New campaign'} ${statusBadge(c.status)}</h1></div>
@@ -128,7 +132,12 @@
           <div class="field"><label>Reply-to <span class="hint">(optional: leave empty so replies come back here and are forwarded to the From address)</span></label><input type="email" name="reply_to" value="${esc(c.reply_to)}" placeholder="${esc(settings.reply_to || (meta.replyDomain ? 'name@' + meta.replyDomain : ''))}"></div>
           <h2 style="margin-top:20px">2. Recipients</h2>
           ${lists.length ? lists.map((l) => `<label class="check"><input type="checkbox" name="list_ids" data-group value="${l.id}" ${c.list_ids.map(String).includes(String(l.id)) ? 'checked' : ''}> ${esc(l.name)} <span class="muted">(${l.subscribed || 0})</span></label>`).join('') : '<p class="muted">No lists yet. <a href="#/lists">Create a list</a> and add contacts.</p>'}
-          <p class="hint">Unsubscribed and bounced contacts and duplicates across lists are skipped automatically. Sending stays within the daily limit in Settings and the Amazon SES quota; large campaigns continue automatically on the following days.</p>
+          <div class="field" style="margin-top:10px"><label>Only contacts tagged <span class="hint">(optional, any of; with no list ticked, everyone carrying the tag)</span></label><input type="text" name="tags" list="camp-tags" value="${esc((c.tags || []).join(', '))}" placeholder="e.g. vip, webinar-2026"></div>
+          <details ${(c.exclude_list_ids || []).length || (c.exclude_tags || []).length ? 'open' : ''} style="margin-bottom:10px"><summary class="muted" style="cursor:pointer">Exclude contacts…</summary>
+            <div style="margin-top:10px">${lists.map((l) => `<label class="check"><input type="checkbox" name="exclude_list_ids" data-group value="${l.id}" ${(c.exclude_list_ids || []).map(String).includes(String(l.id)) ? 'checked' : ''}> on ${esc(l.name)}</label>`).join('')}</div>
+            <div class="field"><label>Tagged <span class="hint">(any of)</span></label><input type="text" name="exclude_tags" list="camp-tags" value="${esc((c.exclude_tags || []).join(', '))}" placeholder="e.g. customer, do-not-email"></div></details>
+          <datalist id="camp-tags">${(facets.tags || []).map((t) => `<option value="${esc(t)}">`).join('')}</datalist>
+          <p class="hint">Only subscribed contacts are emailed: pending (unconfirmed), unsubscribed, bounced and complained contacts and duplicates across lists are skipped automatically. Sending stays within the daily limit in Settings and the Amazon SES quota; large campaigns continue automatically on the following days.</p>
           <h2 style="margin-top:20px">3. Content</h2>
           <div class="field"><label>Template</label><select name="template_id">${opts(templates, c.template_id, { blank: '— choose a template —' })}</select></div>
           <p><a href="#/templates/new-dragdrop">Design a new template</a> · <span id="edit-tpl"></span></p>
@@ -152,6 +161,7 @@
     const save = async () => {
       const data = formData(form);
       data.list_ids = data.list_ids || [];
+      data.exclude_list_ids = data.exclude_list_ids || [];
       if (!data.name) data.name = data.subject || 'Untitled campaign';
       c = c.id ? await api.put(`/campaigns/${c.id}`, data) : await api.post('/campaigns', data);
       history.replaceState(null, '', `#/campaigns/${c.id}`);
@@ -185,7 +195,7 @@
     root.querySelector('#send').onclick = async () => {
       await save();
       const detail = await api.get(`/campaigns/${c.id}`);
-      if (!detail.recipients) return toast('No subscribed recipients in the selected lists', 'error');
+      if (!detail.recipients) return toast('No subscribed recipients match the selected lists and tags', 'error');
       if (!(await confirmDialog(`Send "${detail.subject}" to ${detail.recipients_estimate ? 'up to ' : ''}${detail.recipients} recipients now?`, { okText: 'Send now', danger: false }))) return;
       await api.post(`/campaigns/${c.id}/send`);
       toast('Campaign started. The worker sends in batches every few minutes.');
@@ -243,13 +253,13 @@
         <div class="field"><label>List</label><select name="list_id">${opts(lists, params.get('list_id'), { blank: 'All lists' })}</select></div>
         <div class="field"><label>Country</label><select name="country"><option value="">All</option>${facets.countries.map((c) => `<option>${esc(c)}</option>`).join('')}</select></div>
         <div class="field"><label>Industry</label><select name="industry"><option value="">All</option>${facets.industries.map((c) => `<option>${esc(c)}</option>`).join('')}</select></div>
-        <div class="field"><label>Tag</label><select name="tag"><option value="">All</option>${facets.tags.map((c) => `<option>${esc(c)}</option>`).join('')}</select></div>
-        <div class="field"><label>Status</label><select name="status"><option value="">All</option><option>subscribed</option><option>unsubscribed</option><option>bounced</option></select></div>
+        <div class="field"><label>Tag</label><select name="tag"><option value="">All</option>${facets.tags.map((c) => `<option ${params.get('tag') === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></div>
+        <div class="field"><label>Status</label><select name="status"><option value="">All</option>${['subscribed', 'pending', 'unsubscribed', 'bounced', 'complained'].map((x) => `<option ${params.get('status') === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
       </div></div>
       <div class="card table-wrap"><div class="row" style="align-items:center;margin-bottom:10px" id="bulk">
         <strong id="count"></strong><span class="spacer"></span>
-        <select id="bulk-action" style="width:auto"><option value="">Bulk action…</option><option value="add_to_list">Add to list</option><option value="remove_from_list">Remove from list</option><option value="add_tag">Add tag</option><option value="unsubscribe">Unsubscribe</option><option value="resubscribe">Resubscribe</option><option value="delete">Delete</option></select>
-        <select id="bulk-list" style="width:auto;display:none">${opts(lists, '')}</select><input type="text" id="bulk-tag" placeholder="tag" style="width:140px;display:none">
+        <select id="bulk-action" style="width:auto"><option value="">Bulk action…</option><option value="add_to_list">Add to list</option><option value="remove_from_list">Remove from list</option><option value="add_tag">Add tag</option><option value="remove_tag">Remove tag</option><option value="send_optin">Send confirmation email (pending only)</option><option value="unsubscribe">Unsubscribe</option><option value="resubscribe">Resubscribe</option><option value="delete">Delete</option></select>
+        <select id="bulk-list" style="width:auto;display:none">${opts(lists, '')}</select><input type="text" id="bulk-tag" placeholder="tag" list="bulk-tags" style="width:140px;display:none"><datalist id="bulk-tags">${facets.tags.map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
         <button class="btn" id="bulk-go">Apply to selected</button></div>
         <div id="table"></div>
         <div class="row" style="justify-content:center;margin-top:12px"><button class="btn sm" id="prev">${App.icon('chevron-left', 16)}Prev</button><span id="pageinfo" class="muted"></span><button class="btn sm" id="next">Next${App.icon('chevron-right', 16)}</button></div></div>`;
@@ -279,15 +289,15 @@
     root.querySelector('#next').onclick = () => { if (page * 50 < total) { page++; load(); } };
     root.querySelector('#bulk-action').onchange = (e) => {
       root.querySelector('#bulk-list').style.display = e.target.value.includes('list') ? '' : 'none';
-      root.querySelector('#bulk-tag').style.display = e.target.value === 'add_tag' ? '' : 'none';
+      root.querySelector('#bulk-tag').style.display = e.target.value.endsWith('_tag') ? '' : 'none';
     };
     root.querySelector('#bulk-go').onclick = async () => {
       const ids = [...root.querySelectorAll('.sel:checked')].map((x) => x.value);
       const action = root.querySelector('#bulk-action').value;
       if (!ids.length || !action) return toast('Select contacts and an action', 'error');
       if (action === 'delete' && !(await confirmDialog(`Delete ${ids.length} contacts?`))) return;
-      await api.post('/contacts/bulk', { ids, action, list_id: root.querySelector('#bulk-list').value, tag: root.querySelector('#bulk-tag').value });
-      toast('Done');
+      const r = await api.post('/contacts/bulk', { ids, action, list_id: root.querySelector('#bulk-list').value, tag: root.querySelector('#bulk-tag').value });
+      toast(action === 'send_optin' ? `Confirmation email queued for ${r.count} pending contact${r.count === 1 ? '' : 's'}` : 'Done');
       load();
     };
     root.querySelector('#export').onclick = async () => {
@@ -310,7 +320,7 @@
       <div class="row"><div class="field"><label>First name</label><input type="text" name="first_name" value="${esc(c.first_name)}"></div><div class="field"><label>Last name</label><input type="text" name="last_name" value="${esc(c.last_name)}"></div></div>
       <div class="row"><div class="field"><label>Company</label><input type="text" name="company" value="${esc(c.company)}"></div><div class="field"><label>Website</label><input type="text" name="website" value="${esc(c.website)}"></div></div>
       <div class="row"><div class="field"><label>Country</label><input type="text" name="country" value="${esc(c.country)}"></div><div class="field"><label>Industry</label><input type="text" name="industry" value="${esc(c.industry)}"></div></div>
-      <div class="row"><div class="field"><label>Phone</label><input type="text" name="phone" value="${esc(c.phone)}"></div><div class="field"><label>Status</label><select name="status">${['subscribed', 'unsubscribed', 'bounced'].map((s) => `<option ${c.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></div></div>
+      <div class="row"><div class="field"><label>Phone</label><input type="text" name="phone" value="${esc(c.phone)}"></div><div class="field"><label>Status</label><select name="status">${['subscribed', 'pending', 'unsubscribed', 'bounced', 'complained'].map((s) => `<option ${c.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></div></div>
       <div class="field"><label>Tags <span class="hint">(comma separated)</span></label><input type="text" name="tags" value="${esc(c.tags.join(', '))}"></div>
       <div class="field"><label>Lists</label>${lists.map((l) => `<label class="check"><input type="checkbox" name="list_ids" data-group value="${l.id}" ${c.list_ids.includes(l.id) ? 'checked' : ''}>${esc(l.name)}</label>`).join('') || '<span class="muted">No lists</span>'}</div>
       </div><div class="foot"><button class="btn" data-close>Cancel</button><button class="btn primary" id="go">Save</button></div>`, {
@@ -358,18 +368,27 @@
   route(/^#\/contacts\/([^?]+)$/, async (root, rawId) => {
     const id = encodeURIComponent(decodeURIComponent(rawId));
     const [c, lists] = await Promise.all([api.get(`/contacts/${id}`), api.get('/lists')]);
+    const listNames = (ids) => (ids || []).map((x) => (lists.find((l) => l.id === x) || {}).name).filter(Boolean);
     root.innerHTML = `
       <div class="page-head"><div><a class="back" href="#/contacts">${App.icon('chevron-left', 16)}Contacts</a><h1>${esc(c.email || c.phone || c.id)} ${statusBadge(c.status)}</h1></div>
-        <div class="actions"><button class="btn" id="edit">Edit</button><button class="btn danger" id="del">Delete</button></div></div>
+        <div class="actions">${c.status === 'pending' && c.email ? `<button class="btn" id="optin">${App.icon('send', 16)}Send confirmation email</button>` : ''}<button class="btn" id="edit">Edit</button><button class="btn danger" id="del">Delete</button></div></div>
+      ${c.status === 'pending' ? `<div class="banner info"><span><strong>Awaiting confirmation (double opt-in):</strong> this contact is not emailed until they click the link in the confirmation email${c.optin_sent_at ? `, last sent ${fmtDate(c.optin_sent_at)}` : ''}.${listNames((c.pending_optin || {}).list_ids).length || ((c.pending_optin || {}).tags || []).length ? ` On confirming they join ${esc([...listNames((c.pending_optin || {}).list_ids), ...((c.pending_optin || {}).tags || []).map((t) => `#${t}`)].join(', '))}.` : ''}</span></div>` : ''}
+      ${c.status === 'complained' ? '<div class="banner warn"><span><strong>Marked as spam:</strong> this contact reported one of your emails as spam and will never be emailed again.</span></div>' : ''}
       <div class="grid cols-3">
-        <div class="card"><h2>Profile</h2>${[['Name', `${c.first_name} ${c.last_name}`], ['Company', c.company], ['Website', c.website], ['Phone', c.phone], ['Country', c.country], ['Industry', c.industry], ['Source', c.source], ['Added', fmtDate(c.created_at)], ['Last reply', fmtDate(c.replied_at)]]
+        <div class="card"><h2>Profile</h2>${[['Name', `${c.first_name} ${c.last_name}`], ['Company', c.company], ['Website', c.website], ['Phone', c.phone], ['Country', c.country], ['Industry', c.industry], ['Source', c.source], ['Added', fmtDate(c.created_at)], ['Confirmed opt-in', fmtDate(c.confirmed_at)], ['Last reply', fmtDate(c.replied_at)],
+          ...(c.status === 'unsubscribed' || c.status === 'complained' ? [['Unsubscribed', fmtDate(c.unsubscribed_at)], ['Reason given', c.unsubscribe_reason]] : [])]
           .map(([k, v]) => `<div style="margin-bottom:6px"><span class="muted">${k}:</span> ${esc(v || '—')}</div>`).join('')}
-          <div>${c.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div></div>
+          <div style="margin-bottom:6px"><span class="muted">Lists:</span> ${listNames(c.list_ids).map((n) => `<span class="badge">${esc(n)}</span>`).join(' ') || '—'}</div>
+          <div>${c.tags.map((t) => `<a class="tag" href="#/contacts?tag=${encodeURIComponent(t)}">${esc(t)}</a>`).join('')}</div></div>
         <div class="card" style="grid-column:span 2"><h2>Emails</h2>${c.messages.length ? `<table class="data"><thead><tr><th>Subject</th><th>Campaign</th><th>Status</th><th>Sent</th><th>Opened</th><th>Clicked</th><th>Replied</th></tr></thead><tbody>
           ${c.messages.map((m) => `<tr><td>${esc(m.subject)}</td><td>${esc(m.campaign || 'automation')}</td><td>${statusBadge(m.status)}</td><td class="nowrap">${fmtDate(m.sent_at)}</td><td>${m.opened_at ? '✓' : ''}</td><td>${m.clicked_at ? '✓' : ''}</td><td>${m.replied_at ? '✓' : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No emails sent yet.</p>'}
           <h2 style="margin-top:16px">Replies</h2>${c.replies.length ? c.replies.map((r) => `<div style="margin-bottom:10px">${r.channel === 'whatsapp' ? '<span class="badge green">WhatsApp</span> ' : ''}<strong>${esc(r.subject)}</strong> <span class="muted">${fmtDate(r.received_at)}</span><div class="reply-body">${esc(r.body)}</div></div>`).join('') : '<p class="muted">No replies.</p>'}
           ${(c.whatsapp || []).length ? `<h2 style="margin-top:16px">WhatsApp</h2>${c.whatsapp.map((w) => `<div class="list-row"><span class="badge ${w.direction === 'in' ? 'green' : 'blue'}">${w.direction === 'in' ? 'Received' : 'Sent'}</span><div class="grow">${esc(w.text)}</div><span class="muted nowrap" style="font-size:13px">${fmtDate(w.created_at)}</span></div>`).join('')}` : ''}
         </div></div>`;
+    root.querySelector('#optin')?.addEventListener('click', async () => {
+      await api.post(`/contacts/${id}/send-optin`);
+      toast('Confirmation email queued');
+    });
     root.querySelector('#edit').onclick = () => contactModal(c, lists, (saved) => { location.hash = `#/contacts/${encodeURIComponent(saved?.id || c.id)}`; App.navigate(); });
     root.querySelector('#del').onclick = async () => {
       if (await confirmDialog('Delete this contact?')) { await api.del(`/contacts/${id}`); location.hash = '#/contacts'; }
@@ -380,16 +399,17 @@
   route(/^#\/lists$/, async (root) => {
     const lists = await api.get('/lists');
     root.innerHTML = `
-      <div class="page-head"><div><h1>Lists</h1><div class="subtitle">Group contacts for campaigns and automations.</div></div><div class="actions"><button class="btn primary" id="new">${App.icon('plus', 17)}New list</button></div></div>
+      <div class="page-head"><div><h1>Lists</h1><div class="subtitle">Group contacts for campaigns and automations. Public lists appear on the subscriber's email preference page.</div></div><div class="actions"><button class="btn primary" id="new">${App.icon('plus', 17)}New list</button></div></div>
       <div class="card table-wrap">${lists.length ? `<table class="data"><thead><tr><th>Name</th><th>Description</th><th class="right">Contacts</th><th class="right">Subscribed</th><th>Created</th><th></th></tr></thead><tbody>
-        ${lists.map((l) => `<tr><td><a href="#/contacts?list_id=${l.id}">${esc(l.name)}</a></td><td class="muted">${esc(l.description)}</td><td class="right">${l.contacts}</td><td class="right">${l.subscribed || 0}</td><td>${fmtDate(l.created_at)}</td>
-          <td class="nowrap"><button class="btn sm" data-edit="${l.id}">Rename</button> <button class="btn sm danger" data-del="${l.id}">Delete</button></td></tr>`).join('')}
+        ${lists.map((l) => `<tr><td><a href="#/contacts?list_id=${l.id}">${esc(l.name)}</a>${l.is_public ? ' <span class="badge blue" title="Subscribers can join or leave this list on the preference page">public</span>' : ''}</td><td class="muted">${esc(l.description)}</td><td class="right">${l.contacts}</td><td class="right">${l.subscribed || 0}</td><td>${fmtDate(l.created_at)}</td>
+          <td class="nowrap"><button class="btn sm" data-edit="${l.id}">Edit</button> <button class="btn sm danger" data-del="${l.id}">Delete</button></td></tr>`).join('')}
       </tbody></table>` : '<div class="empty">No lists yet.</div>'}</div>`;
     const edit = (l) => modal(`<h2>${l ? 'Edit list' : 'New list'}</h2><div class="field"><label>Name</label><input type="text" id="n" value="${esc(l?.name || '')}"></div>
-      <div class="field"><label>Description</label><input type="text" id="d" value="${esc(l?.description || '')}"></div>
+      <div class="field"><label>Description <span class="hint">(shown to subscribers when the list is public)</span></label><input type="text" id="d" value="${esc(l?.description || '')}"></div>
+      <label class="check"><input type="checkbox" id="pub" ${l?.is_public ? 'checked' : ''}> Public: subscribers can join or leave this list themselves on the email preference page</label>
       <div class="foot"><button class="btn" data-close>Cancel</button><button class="btn primary" id="go">Save</button></div>`, {
       onMount: (el, close) => (el.querySelector('#go').onclick = async () => {
-        const body = { name: el.querySelector('#n').value, description: el.querySelector('#d').value };
+        const body = { name: el.querySelector('#n').value, description: el.querySelector('#d').value, is_public: el.querySelector('#pub').checked };
         if (l) await api.put(`/lists/${l.id}`, body);
         else await api.post('/lists', body);
         close();
@@ -400,6 +420,63 @@
     root.querySelectorAll('[data-edit]').forEach((b) => (b.onclick = () => edit(lists.find((l) => String(l.id) === b.dataset.edit))));
     root.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
       if (await confirmDialog('Delete this list? Contacts are kept.')) { await api.del(`/lists/${b.dataset.del}`); App.navigate(); }
+    }));
+  });
+
+  // ================================================================ Tags
+  route(/^#\/tags$/, async (root) => {
+    const tags = await api.get('/tags');
+    root.innerHTML = `
+      <div class="page-head"><div><h1>Tags</h1><div class="subtitle">Label contacts by interest and behaviour. Tags start automations, are set by automations and forms, and choose who a campaign goes to.</div></div>
+        <div class="actions"><a class="btn" href="#/automations/new/tag_sequence">${App.icon('zap', 17)}Automation on a tag</a><button class="btn primary" id="new">${App.icon('plus', 17)}Tag contacts</button></div></div>
+      <div class="card table-wrap">${tags.length ? `<table class="data"><thead><tr><th>Tag</th><th class="right">Contacts</th><th class="right">Subscribed</th><th></th></tr></thead><tbody>
+        ${tags.map((t, i) => `<tr><td><a class="tag" href="#/contacts?tag=${encodeURIComponent(t.tag)}">${esc(t.tag)}</a></td><td class="right">${t.contacts}</td><td class="right">${t.subscribed}</td>
+          <td class="nowrap right"><a class="btn sm" href="#/campaigns/new" data-camp="${i}">Email this tag</a> <button class="btn sm" data-rename="${i}">Rename</button> <button class="btn sm danger" data-del="${i}">Remove from all</button></td></tr>`).join('')}
+      </tbody></table>` : '<div class="empty">No tags yet. Tags are added when you import contacts, by subscribe forms, by automations (for example when someone clicks a link) or by hand.</div>'}</div>
+      <div class="card"><h2>How tags work here</h2>
+        <ul style="margin:0;padding-left:20px;line-height:1.9">
+          <li><b>Tag automatically:</b> an <a href="#/automations">automation</a> can add or remove a tag when someone opens, clicks a link, replies, submits a form or confirms their subscription.</li>
+          <li><b>Start on a tag:</b> the <b>Tag added</b> and <b>Tag removed</b> triggers start an automation the moment a tag changes.</li>
+          <li><b>Branch on a tag:</b> the <b>Only continue if…</b>, <b>Stop if…</b> and <b>Wait until…</b> steps check whether a contact has a tag.</li>
+          <li><b>Send by tag:</b> a <a href="#/campaigns">campaign</a> can go to everyone carrying a tag, and leave out those carrying another.</li>
+        </ul></div>`;
+    root.querySelector('#new').onclick = () => modal(`<h2>Tag contacts</h2><p class="hint">Add a tag to contacts by email address (one per line or comma separated). To tag many at once, use the bulk action on the <a href="#/contacts">Contacts</a> page.</p>
+      <div class="field"><label>Tag</label><input type="text" id="tg" placeholder="e.g. vip"></div>
+      <div class="field"><label>Contact emails</label><textarea id="em" rows="4" placeholder="jane@acme.com&#10;lee@beta.io"></textarea></div>
+      <div class="foot"><button class="btn" data-close>Cancel</button><button class="btn primary" id="go">Add tag</button></div>`, {
+      onMount: (el, close) => (el.querySelector('#go').onclick = async () => {
+        const ids = el.querySelector('#em').value.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+        const tag = el.querySelector('#tg').value.trim();
+        if (!tag || !ids.length) return toast('Enter a tag and at least one email', 'error');
+        await api.post('/contacts/bulk', { ids, action: 'add_tag', tag });
+        close();
+        toast('Tag added');
+        App.navigate();
+      }),
+    });
+    root.querySelectorAll('[data-camp]').forEach((a) => (a.onclick = (e) => {
+      e.preventDefault();
+      sessionStorage.setItem('campaign-tag', tags[Number(a.dataset.camp)].tag);
+      location.hash = '#/campaigns/new';
+    }));
+    root.querySelectorAll('[data-rename]').forEach((b) => (b.onclick = () => {
+      const t = tags[Number(b.dataset.rename)];
+      modal(`<h2>Rename tag</h2><p class="hint">Renames the tag on every contact, subscribe form and campaign audience. If the new name is an existing tag, the two are merged. Automations that mention the old name are not changed: update them yourself.</p>
+        <div class="field"><label>New name</label><input type="text" id="to" value="${esc(t.tag)}"></div>
+        <div class="foot"><button class="btn" data-close>Cancel</button><button class="btn primary" id="go">Rename</button></div>`, {
+        onMount: (el, close) => (el.querySelector('#go').onclick = async () => {
+          await api.post('/tags/rename', { from: t.tag, to: el.querySelector('#to').value });
+          close();
+          App.navigate();
+        }),
+      });
+    }));
+    root.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
+      const t = tags[Number(b.dataset.del)];
+      if (await confirmDialog(`Remove the tag "${t.tag}" from ${t.contacts} contact${t.contacts === 1 ? '' : 's'}? The contacts are kept.`, { okText: 'Remove tag' })) {
+        await api.post('/tags/delete', { tag: t.tag });
+        App.navigate();
+      }
     }));
   });
 

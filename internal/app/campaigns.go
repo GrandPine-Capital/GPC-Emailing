@@ -9,6 +9,20 @@ import (
 	"github.com/grandpine-capital/gpc-emailing/internal/store"
 )
 
+// audienceSQL selects a campaign's recipients among contacts c: subscribed, on any of the lists
+// ($2) and, when tags ($3) are given, carrying any of them (the tags alone when there is no
+// list), and on none of the excluded lists ($4) or tags ($5). $1 is left to the caller.
+const audienceSQL = `c.status = 'subscribed' AND (cardinality($2::text[]) > 0 OR cardinality($3::text[]) > 0)
+	AND (cardinality($2::text[]) = 0 OR c.list_ids && $2::text[]) AND (cardinality($3::text[]) = 0 OR c.tags && $3::text[])
+	AND NOT (c.list_ids && $4::text[]) AND NOT (c.tags && $5::text[])`
+
+func orEmptyList(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
+}
+
 // launch queues a message for every subscribed contact on the campaign's lists (once per
 // contact, across lists and relaunches) and marks the campaign sending (Campaigns.launch).
 func (s *Service) launch(ctx context.Context, c Campaign) (int, error) {
@@ -18,8 +32,9 @@ func (s *Service) launch(ctx context.Context, c Campaign) (int, error) {
 	}
 	n := 0
 	err := s.db.InTx(ctx, func(tx pgx.Tx) error {
-		recipients, err := store.Structs[Contact](ctx, tx, `SELECT * FROM contacts c WHERE c.list_ids && $2 AND c.status = 'subscribed'
-			AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.campaign_id = $1 AND m.contact_id = c.id) ORDER BY c.created_at`, c.ID, c.ListIDs)
+		recipients, err := store.Structs[Contact](ctx, tx, `SELECT * FROM contacts c WHERE `+audienceSQL+`
+			AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.campaign_id = $1 AND m.contact_id = c.id) ORDER BY c.created_at`,
+			c.ID, orEmptyList(c.ListIDs), orEmptyList(c.Tags), orEmptyList(c.ExcludeListIDs), orEmptyList(c.ExcludeTags))
 		if err != nil {
 			return err
 		}

@@ -25,6 +25,10 @@ type Contact struct {
 	Source    string     `db:"source" json:"source"`
 	CreatedAt time.Time  `db:"created_at" json:"created_at"`
 	RepliedAt *time.Time `db:"replied_at" json:"replied_at"`
+	// ConfirmedAt is when they confirmed a double opt-in.
+	ConfirmedAt *time.Time `db:"confirmed_at" json:"confirmed_at"`
+	// PendingOptIn is what confirming applies: list_ids, tags, form_id.
+	PendingOptIn map[string]any `db:"pending_optin" json:"-"`
 }
 
 // Fields is the contact as merge-tag source (and the webhook step's payload).
@@ -76,18 +80,21 @@ type Template struct {
 }
 
 type Campaign struct {
-	ID          string     `db:"id"`
-	Name        string     `db:"name"`
-	Subject     string     `db:"subject"`
-	Preheader   string     `db:"preheader"`
-	TemplateID  *string    `db:"template_id"`
-	FromName    string     `db:"from_name"`
-	FromEmail   string     `db:"from_email"`
-	ReplyTo     string     `db:"reply_to"`
-	ListIDs     []string   `db:"list_ids"`
-	Status      string     `db:"status"`
-	ScheduledAt *time.Time `db:"scheduled_at"`
-	StartedAt   *time.Time `db:"started_at"`
+	ID             string     `db:"id"`
+	Name           string     `db:"name"`
+	Subject        string     `db:"subject"`
+	Preheader      string     `db:"preheader"`
+	TemplateID     *string    `db:"template_id"`
+	FromName       string     `db:"from_name"`
+	FromEmail      string     `db:"from_email"`
+	ReplyTo        string     `db:"reply_to"`
+	ListIDs        []string   `db:"list_ids"`
+	Tags           []string   `db:"tags"`
+	ExcludeListIDs []string   `db:"exclude_list_ids"`
+	ExcludeTags    []string   `db:"exclude_tags"`
+	Status         string     `db:"status"`
+	ScheduledAt    *time.Time `db:"scheduled_at"`
+	StartedAt      *time.Time `db:"started_at"`
 }
 
 type Automation struct {

@@ -26,6 +26,8 @@ type Server struct {
 	authMode       string
 	allowedOrigins []string
 	log            *slog.Logger
+	// formLimit caps sign-ups through the public forms per client address.
+	formLimit *limiter
 }
 
 type Deps struct {
@@ -42,7 +44,8 @@ type Deps struct {
 }
 
 func New(d Deps) http.Handler {
-	s := &Server{svc: d.Service, staff: d.Staff, realm: d.Realm, authMode: d.AuthMode, allowedOrigins: d.AllowedOrigins, log: d.Log}
+	s := &Server{svc: d.Service, staff: d.Staff, realm: d.Realm, authMode: d.AuthMode, allowedOrigins: d.AllowedOrigins, log: d.Log,
+		formLimit: newLimiter(10, time.Minute)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("GET /readyz", s.ready)
@@ -160,7 +163,7 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: 200}
 		next.ServeHTTP(sw, r)
-		if !strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/hook" {
+		if !strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/hook" && !strings.HasPrefix(r.URL.Path, "/f/") {
 			return
 		}
 		s.log.InfoContext(r.Context(), "request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "ms", time.Since(start).Milliseconds())

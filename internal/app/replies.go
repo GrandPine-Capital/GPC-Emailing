@@ -169,7 +169,7 @@ func (s *Service) handleBounce(ctx context.Context, text string) (bool, error) {
 }
 
 // processEvents reads SES bounce and complaint events: a permanent bounce marks the contact
-// bounced; a complaint (marked as spam) unsubscribes them.
+// bounced; a complaint (marked as spam) marks them complained, and they are never mailed again.
 func (s *Service) processEvents(ctx context.Context, hasTime func() bool) (int, error) {
 	if s.mail == nil {
 		return 0, nil
@@ -193,7 +193,7 @@ func (s *Service) processEvents(ctx context.Context, hasTime func() bool) (int, 
 						_, _ = s.db.Pool.Exec(ctx, `UPDATE messages SET error = 'bounced' WHERE id = $1`, msg.ID)
 					}
 				case ev.Type == "Complaint":
-					if _, err := s.UnsubscribeContact(ctx, core.EmailKey(r), msg); err != nil {
+					if _, err := s.optOut(ctx, core.EmailKey(r), msg, "complained", "Marked as spam"); err != nil {
 						return err
 					}
 				}

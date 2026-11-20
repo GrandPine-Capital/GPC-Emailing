@@ -16,8 +16,8 @@ import (
 // task (a rolling deploy briefly runs two).
 const workerLock = 0x6770_656d_6c01 // "gpeml" 1
 
-// Tick runs the worker's steps once within maxDur (tick() in Code.js): campaign and automation
-// mail, SES bounces and complaints, replies, automations and the lead finder. Busy when another tick holds the lock.
+// Tick runs the worker's steps once within maxDur (tick() in Code.js): opt-in confirmations,
+// campaign and automation mail, SES bounces and complaints, replies, automations and the lead finder. Busy when another tick holds the lock.
 func (s *Service) Tick(ctx context.Context, maxDur time.Duration) (map[string]any, error) {
 	conn, err := s.db.Pool.Acquire(ctx)
 	if err != nil {
@@ -53,6 +53,7 @@ func (s *Service) Tick(ctx context.Context, maxDur time.Duration) (map[string]an
 			summary[name] = n
 		}
 	}
+	step("optins", func() (int, error) { return s.processOptIns(ctx, hasTime) })
 	step("campaigns", func() (int, error) { return s.processQueue(ctx, hasTime) })
 	step("bounces", func() (int, error) { return s.processEvents(ctx, hasTime) })
 	step("replies", func() (int, error) { return s.processInbound(ctx, hasTime) })

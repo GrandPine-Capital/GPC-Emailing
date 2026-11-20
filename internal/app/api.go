@@ -61,6 +61,7 @@ func (s *Service) Stats(ctx context.Context) (map[string]any, error) {
 	}{
 		{"contacts", `SELECT count(*) FROM contacts`},
 		{"subscribed", `SELECT count(*) FROM contacts WHERE status = 'subscribed'`},
+		{"pending", `SELECT count(*) FROM contacts WHERE status = 'pending'`},
 		{"lists", `SELECT count(*) FROM lists`},
 		{"campaigns", `SELECT count(*) FROM campaigns`},
 		{"activeAutomations", `SELECT count(*) FROM automations WHERE status = 'active'`},
@@ -204,8 +205,8 @@ func (s *Service) Campaign(ctx context.Context, id string) (store.Row, error) {
 	if c["links"], err = store.Rows(ctx, s.db.Pool, `SELECT url, clicks, '' AS people FROM campaign_links WHERE campaign_id = $1 ORDER BY clicks DESC`, id); err != nil {
 		return nil, err
 	}
-	lists := strList(c["list_ids"])
-	n, err := store.Count(ctx, s.db.Pool, `SELECT count(*) FROM contacts WHERE list_ids && $1 AND status = 'subscribed'`, lists)
+	n, err := store.Count(ctx, s.db.Pool, `SELECT count(*) FROM contacts c WHERE $1::text <> '' AND `+audienceSQL, id,
+		campaignListIDs(c["list_ids"]), campaignListIDs(c["tags"]), campaignListIDs(c["exclude_list_ids"]), campaignListIDs(c["exclude_tags"]))
 	if err != nil {
 		return nil, err
 	}
@@ -233,9 +234,10 @@ func (s *Service) CreateCampaign(ctx context.Context, b map[string]any) (store.R
 	if name == "" {
 		name = "Untitled campaign"
 	}
-	c, err := store.One(ctx, s.db.Pool, `INSERT INTO campaigns (id, name, subject, preheader, template_id, from_name, from_email, reply_to, list_ids, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-		ids.New(), name, str(b["subject"]), str(b["preheader"]), nilIfEmpty(str(b["template_id"])), str(b["from_name"]), str(b["from_email"]), str(b["reply_to"]), campaignListIDs(b["list_ids"]), s.now())
+	c, err := store.One(ctx, s.db.Pool, `INSERT INTO campaigns (id, name, subject, preheader, template_id, from_name, from_email, reply_to, list_ids,
+		tags, exclude_list_ids, exclude_tags, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+		ids.New(), name, str(b["subject"]), str(b["preheader"]), nilIfEmpty(str(b["template_id"])), str(b["from_name"]), str(b["from_email"]), str(b["reply_to"]),
+		campaignListIDs(b["list_ids"]), core.NormaliseTags(strList(b["tags"])), campaignListIDs(b["exclude_list_ids"]), core.NormaliseTags(strList(b["exclude_tags"])), s.now())
 	if err != nil {
 		return nil, err
 	}
@@ -263,8 +265,17 @@ func (s *Service) UpdateCampaign(ctx context.Context, id string, b map[string]an
 				return err
 			}
 		}
-		if v, ok := b["list_ids"]; ok && v != nil {
-			if _, err := tx.Exec(ctx, `UPDATE campaigns SET list_ids = $2 WHERE id = $1`, id, campaignListIDs(v)); err != nil {
+		// Fixed column names.
+		for _, f := range []string{"list_ids", "exclude_list_ids", "tags", "exclude_tags"} {
+			v, ok := b[f]
+			if !ok || v == nil {
+				continue
+			}
+			val := campaignListIDs(v)
+			if strings.HasSuffix(f, "tags") {
+				val = core.NormaliseTags(strList(v))
+			}
+			if _, err := tx.Exec(ctx, `UPDATE campaigns SET `+f+` = $2 WHERE id = $1`, id, val); err != nil {
 				return err
 			}
 		}
@@ -295,15 +306,15 @@ func (s *Service) DeleteCampaign(ctx context.Context, id string) error {
 func (s *Service) SendCampaign(ctx context.Context, id string) error {
 	_, err := s.updateCampaign(ctx, id, func(tx pgx.Tx, status string) error {
 		var tpl *string
-		var lists []string
-		if err := tx.QueryRow(ctx, `SELECT template_id, list_ids FROM campaigns WHERE id = $1`, id).Scan(&tpl, &lists); err != nil {
+		var lists, tags []string
+		if err := tx.QueryRow(ctx, `SELECT template_id, list_ids, tags FROM campaigns WHERE id = $1`, id).Scan(&tpl, &lists, &tags); err != nil {
 			return err
 		}
 		switch {
 		case tpl == nil || *tpl == "":
 			return userErr("Choose a template first")
-		case len(lists) == 0:
-			return userErr("Choose at least one list")
+		case len(lists) == 0 && len(tags) == 0:
+			return userErr("Choose at least one list or tag")
 		case status != "draft" && status != "scheduled":
 			return userErr("Campaign is already " + status)
 		}
@@ -361,12 +372,17 @@ func (s *Service) MoveCampaign(ctx context.Context, id, from, to string) error {
 
 func (s *Service) DuplicateCampaign(ctx context.Context, id string) (map[string]any, error) {
 	nid := ids.New()
-	err := store.Affected(s.db.Pool.Exec(ctx, `INSERT INTO campaigns (id, name, subject, preheader, template_id, from_name, from_email, reply_to, list_ids, created_at)
-		SELECT $2, name || ' (copy)', subject, preheader, template_id, from_name, from_email, reply_to, list_ids, $3 FROM campaigns WHERE id = $1`, id, nid, s.now()))
+	err := store.Affected(s.db.Pool.Exec(ctx, `INSERT INTO campaigns (id, name, subject, preheader, template_id, from_name, from_email, reply_to, list_ids,
+		tags, exclude_list_ids, exclude_tags, created_at)
+		SELECT $2, name || ' (copy)', subject, preheader, template_id, from_name, from_email, reply_to, list_ids, tags, exclude_list_ids, exclude_tags, $3
+		FROM campaigns WHERE id = $1`, id, nid, s.now()))
 	return map[string]any{"id": nid}, err
 }
 
 // ---------------------------------------------------------------- automations
+
+// conditional steps test a condition.
+var conditional = map[string]bool{"stop_if": true, "if_else": true, "wait_until": true}
 
 // ValidateAutomation checks the trigger and steps (validateAutomation in backend.js).
 func ValidateAutomation(b map[string]any) error {
@@ -393,8 +409,14 @@ func ValidateAutomation(b map[string]any) error {
 			return userErr(fmt.Sprintf("Step %d: enter a tag", n))
 		case (t == "add_to_list" || t == "remove_from_list") && str(st["list_id"]) == "":
 			return userErr(fmt.Sprintf("Step %d: choose a list", n))
-		case t == "stop_if" && (str(st["condition"]) == "has_tag" || str(st["condition"]) == "not_has_tag") && str(st["tag"]) == "":
+		case conditional[t] && !catalog.IsCondition(str(st["condition"])):
+			return userErr(fmt.Sprintf("Step %d: choose a condition", n))
+		case conditional[t] && (str(st["condition"]) == "has_tag" || str(st["condition"]) == "not_has_tag") && str(st["tag"]) == "":
 			return userErr(fmt.Sprintf("Step %d: enter the tag to check", n))
+		case conditional[t] && (str(st["condition"]) == "in_list" || str(st["condition"]) == "not_in_list") && str(st["list_id"]) == "":
+			return userErr(fmt.Sprintf("Step %d: choose the list to check", n))
+		case t == "start_automation" && str(st["automation_id"]) == "":
+			return userErr(fmt.Sprintf("Step %d: choose the automation to start", n))
 		}
 	}
 	return nil

@@ -39,7 +39,7 @@
   }
 
   App.route(/^#\/settings(?:\?(.*))?$/, async (root, qs) => {
-    const [s, meta] = await Promise.all([api.get('/settings'), App.getMeta(true)]);
+    const [s, meta, templates, forms] = await Promise.all([api.get('/settings'), App.getMeta(true), api.get('/templates'), api.get('/forms')]);
     const mail = s.mail || {};
     const sesAcct = mail.account || {};
     const st = s.status || {};
@@ -76,6 +76,24 @@
           <div class="field">${fieldLabel('Reply-to <span class="hint-inline">(optional)</span>')}${input('reply_to', s.reply_to, { type: 'email', placeholder: 'team@company.com' })}</div>
           <div class="field" style="margin-bottom:0">${fieldLabel('Company postal address <span class="hint-inline">(required by CAN-SPAM; shown in footers)</span>')}
             <textarea name="company_address" rows="2" placeholder="548 Market St, Suite 12345, San Francisco, CA 94104">${esc(s.company_address || '')}</textarea></div>
+        </section>
+
+        <section class="card">
+          ${cardHead({ icon: 'user-plus', tone: 'green', title: 'Subscription & opt-in', sub: 'Double opt-in confirmation, unsubscribing and the preference page', aside: `<span class="badge outline lg">${forms.length} form${forms.length === 1 ? '' : 's'}</span>` })}
+          <p class="muted" style="margin-top:0">People who sign up through a double opt-in <a href="#/forms">subscribe form</a> (or a webhook with <code>"double_optin": true</code>) get this email and stay <span class="badge yellow">pending</span> until they click its link.</p>
+          <div class="field">${fieldLabel('Confirmation email template', '<a href="#/templates">Templates</a>')}
+            <select name="optin_template_id">${templates.map((t) => `<option value="${esc(t.id)}" ${t.id === s.optin_template_id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
+            <div class="hint">Put <code>{{confirm_url}}</code> on the button or link; a template without it gets a "Confirm my subscription" button added.</div></div>
+          <div class="field">${fieldLabel('Confirmation email subject <span class="hint-inline">(blank = the template\'s subject)</span>')}${input('optin_subject', s.optin_subject, { placeholder: 'Please confirm your subscription' })}</div>
+          <div class="row">
+            <div class="field">${fieldLabel('After confirming, show')}${input('optin_confirmed_message', s.optin_confirmed_message, { placeholder: 'Thank you. Your subscription is confirmed.' })}</div>
+            <div class="field">${fieldLabel('…or send them to <span class="hint-inline">(optional)</span>')}${input('optin_redirect_url', s.optin_redirect_url, { type: 'url', placeholder: 'https://yoursite.com/welcome' })}</div>
+          </div>
+          <hr class="divider">
+          <div class="field">${fieldLabel('Unsubscribe page')}
+            <select name="ask_unsubscribe_reason"><option value="true" ${s.ask_unsubscribe_reason !== false ? 'selected' : ''}>Ask why they are leaving (optional for them; shown on the contact)</option><option value="false" ${s.ask_unsubscribe_reason === false ? 'selected' : ''}>Just one button</option></select></div>
+          <div class="field">${fieldLabel('After unsubscribing, send them to <span class="hint-inline">(optional)</span>')}${input('unsubscribe_redirect_url', s.unsubscribe_redirect_url, { type: 'url', placeholder: 'https://yoursite.com/sorry-to-see-you-go' })}</div>
+          <div class="inforow">${icon('info', 18)}<span>Every marketing email gets an <b>Unsubscribe</b> and a <b>Manage preferences</b> link automatically, plus one-click unsubscribe for Gmail and Yahoo. In templates: <code>{{unsubscribe_url}}</code>, <code>{{manage_subscription_url}}</code>, <code>{{view_online_url}}</code>. Mark <a href="#/lists">lists</a> as public to let subscribers leave them one by one.</span></div>
         </section>
 
         <section class="card">
@@ -172,7 +190,7 @@
             <div class="hint">In ChatDaddy, add this URL as a webhook for the <b>message-insert</b> event. Incoming WhatsApp messages then appear in <a href="#/replies">Replies</a>, stop "stop on reply" sequences and fire the <b>WhatsApp message received</b> trigger.</div></div>
           <div class="field">${fieldLabel('Generic webhook URL (forms, Zapier, CRM)', `<button type="button" class="link-btn" data-copy-from="gen_hook">${icon('copy', 14)}Copy</button>`)}
             <input type="text" class="mono" id="gen_hook" value="${esc(s.generic_webhook_url || (admin ? '' : 'Admins only'))}" readonly>
-            <div class="hint">POST JSON like <code>{"email":"jane@acme.com","phone":"+60123456789","name":"Jane Tan","tags":["webinar"],"list_id":"…","event":"form_submitted"}</code>. The contact is created or updated and the <b>Webhook received</b> trigger fires.</div></div>
+            <div class="hint">POST JSON like <code>{"email":"jane@acme.com","phone":"+60123456789","name":"Jane Tan","tags":["webinar"],"list_id":"…","event":"form_submitted"}</code>. The contact is created or updated and the <b>Webhook received</b> trigger fires. Add <code>"double_optin": true</code> to send the confirmation email first: the list and tags then apply once the person confirms.</div></div>
           ${admin ? `<button type="button" class="btn" id="regen">${icon('refresh', 16)}Generate new secret</button>` : ''}
         </section>
       </div>

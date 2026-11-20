@@ -269,8 +269,8 @@ func TestCampaignLifecycle(t *testing.T) {
 	if e.scalar(t, `SELECT status FROM contacts WHERE id = 'bob@beta.io'`) != "bounced" {
 		t.Error("Bob should be bounced")
 	}
-	if e.scalar(t, `SELECT status FROM contacts WHERE id = 'carol@gamma.io'`) != "unsubscribed" {
-		t.Error("Carol complained: she should be unsubscribed")
+	if e.scalar(t, `SELECT status FROM contacts WHERE id = 'carol@gamma.io'`) != "complained" {
+		t.Error("Carol complained: she should be marked complained")
 	}
 	if tags := e.scalar(t, `SELECT array_to_string(tags, ',') FROM contacts WHERE id = 'alice@acme.com'`); !strings.Contains(tags.(string), "hot-lead") {
 		t.Errorf("Alice's tags = %v", tags)

@@ -110,7 +110,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	// lists
 	h("GET "+p+"/lists", func(w http.ResponseWriter, r *http.Request) { v, err := svc.Lists(r.Context()); s.reply(w, r, v, err) })
 	h("POST "+p+"/lists", withBody(func(w http.ResponseWriter, r *http.Request, b body) {
-		v, err := svc.CreateList(r.Context(), sv(b["name"]), sv(b["description"]))
+		v, err := svc.CreateListWith(r.Context(), sv(b["name"]), sv(b["description"]), b["is_public"] == true)
 		s.reply(w, r, v, err)
 	}))
 	h("PUT "+p+"/lists/{id}", withBody(func(w http.ResponseWriter, r *http.Request, b body) {
@@ -175,6 +175,38 @@ func (s *Server) routes(mux *http.ServeMux) {
 		v, err := svc.ExportContacts(r.Context(), qp)
 		s.reply(w, r, v, err)
 	}))
+
+	h("POST "+p+"/contacts/{id}/send-optin", func(w http.ResponseWriter, r *http.Request) {
+		n, err := svc.RequestOptIn(r.Context(), []string{id(r)})
+		s.reply(w, r, map[string]any{"ok": true, "queued": n}, err)
+	})
+
+	// tags
+	h("GET "+p+"/tags", func(w http.ResponseWriter, r *http.Request) { v, err := svc.Tags(r.Context()); s.reply(w, r, v, err) })
+	h("POST "+p+"/tags/rename", withBody(func(w http.ResponseWriter, r *http.Request, b body) {
+		n, err := svc.RenameTag(r.Context(), sv(b["from"]), sv(b["to"]))
+		s.reply(w, r, map[string]any{"ok": true, "count": n}, err)
+	}))
+	h("POST "+p+"/tags/delete", withBody(func(w http.ResponseWriter, r *http.Request, b body) {
+		n, err := svc.DeleteTag(r.Context(), sv(b["tag"]))
+		s.reply(w, r, map[string]any{"ok": true, "count": n}, err)
+	}))
+
+	// subscribe forms
+	h("GET "+p+"/forms", func(w http.ResponseWriter, r *http.Request) { v, err := svc.Forms(r.Context()); s.reply(w, r, v, err) })
+	h("GET "+p+"/forms/{id}", func(w http.ResponseWriter, r *http.Request) {
+		v, err := svc.Form(r.Context(), id(r))
+		s.reply(w, r, v, err)
+	})
+	h("POST "+p+"/forms", withBody(func(w http.ResponseWriter, r *http.Request, b body) {
+		v, err := svc.CreateForm(r.Context(), b)
+		s.reply(w, r, v, err)
+	}))
+	h("PUT "+p+"/forms/{id}", withBody(func(w http.ResponseWriter, r *http.Request, b body) {
+		v, err := svc.UpdateForm(r.Context(), id(r), b)
+		s.reply(w, r, v, err)
+	}))
+	h("DELETE "+p+"/forms/{id}", func(w http.ResponseWriter, r *http.Request) { s.reply(w, r, ok, svc.DeleteForm(r.Context(), id(r))) })
 
 	// campaigns
 	h("GET "+p+"/campaigns", func(w http.ResponseWriter, r *http.Request) {

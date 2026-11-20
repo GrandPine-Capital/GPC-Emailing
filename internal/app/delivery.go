@@ -23,8 +23,10 @@ type buildOpts struct {
 	Vars          map[string]string // the recipient's fields
 	Token         string
 	Track         bool
-	// NoUnsubscribe: transactional mail (auto-replies) carries no marketing footer.
+	// NoUnsubscribe: transactional mail (auto-replies, opt-in confirmations) carries no marketing footer.
 	NoUnsubscribe bool
+	// Extra merge tags (confirm_url).
+	Extra map[string]string
 }
 
 var (
@@ -53,9 +55,15 @@ func (s *Service) buildEmail(ctx context.Context, o buildOpts) (Built, error) {
 	st := s.Settings(ctx)
 	unsubscribeURL := s.baseURL + "/u?t=" + o.Token
 	vars := core.ContactVars(o.Vars)
+	manageURL, viewURL := s.baseURL+"/m?t="+o.Token, s.baseURL+"/v?t="+o.Token
 	vars["unsubscribe_url"] = unsubscribeURL
+	vars["manage_subscription_url"] = manageURL
+	vars["view_online_url"] = viewURL
 	vars["company_address"] = st.CompanyAddress
 	vars["sender_name"] = st.FromName
+	for k, v := range o.Extra {
+		vars[k] = v
+	}
 	body := core.Merge(o.HTML, vars, true)
 
 	if !o.NoUnsubscribe && !strings.Contains(body, unsubscribeURL) {
@@ -63,16 +71,20 @@ func (s *Service) buildEmail(ctx context.Context, o buildOpts) (Built, error) {
 		if st.CompanyAddress != "" {
 			addr = core.EscapeHTML(st.CompanyAddress) + "<br>"
 		}
+		manage := ""
+		if !strings.Contains(body, manageURL) {
+			manage = ` &middot; <a href="` + manageURL + `" style="color:#6b7280;">Manage preferences</a>`
+		}
 		body = beforeBodyEnd(body, `<div style="font:12px/1.5 Arial,sans-serif;color:#6b7280;text-align:center;padding:16px;">`+addr+
-			`<a href="`+unsubscribeURL+`" style="color:#6b7280;">Unsubscribe</a></div>`)
+			`<a href="`+unsubscribeURL+`" style="color:#6b7280;">Unsubscribe</a>`+manage+`</div>`)
 	}
 	if o.Track {
 		var ferr error
 		body = hrefRe.ReplaceAllStringFunc(body, func(match string) string {
 			raw := hrefRe.FindStringSubmatch(match)[1]
 			url := strings.ReplaceAll(raw, "&amp;", "&")
-			if url == unsubscribeURL {
-				return match
+			if url == unsubscribeURL || url == manageURL || url == viewURL {
+				return match // the subscriber's own links are not click-tracked
 			}
 			key, err := s.linkKey(ctx, url)
 			if err != nil {
@@ -99,7 +111,7 @@ func (s *Service) buildEmail(ctx context.Context, o buildOpts) (Built, error) {
 	}
 	text := core.HTMLToText(core.Merge(o.HTML, vars, false))
 	if !o.NoUnsubscribe {
-		text += "\n\nUnsubscribe: " + unsubscribeURL
+		text += "\n\nUnsubscribe: " + unsubscribeURL + "\nManage preferences: " + manageURL
 	}
 	return Built{Subject: core.Merge(o.Subject, vars, false), HTML: body, Text: text, Headers: headers, UnsubscribeURL: unsubscribeURL}, nil
 }
@@ -127,6 +139,24 @@ func (s *Service) insertMessage(ctx context.Context, q store.Q, m newMessage) (s
 		token, nilIfEmpty(m.CampaignID), nilIfEmpty(m.CampaignName), nilIfEmpty(m.AutomationID), nilIfEmpty(m.RunID), m.Contact.ID,
 		m.Contact.Email, m.Contact.Name(), m.Contact.Company, nilIfEmpty(m.TemplateID), nilIfEmpty(m.FromEmail), m.Subject, s.now())
 	return token, store.MapErr(err)
+}
+
+// messageContent is a message's HTML and subject before merge tags: the template, with the
+// campaign's preheader and subject when it has them.
+func messageContent(m Message, t *Template, camp *Campaign) (html, subject string) {
+	html, subject = t.HTML, m.Subject
+	if camp != nil {
+		if camp.Preheader != "" {
+			html = bodyRe.ReplaceAllString(html, `<body$1><div style="display:none;max-height:0;overflow:hidden;">`+strings.ReplaceAll(core.EscapeHTML(camp.Preheader), "$", "$$")+`</div>`)
+		}
+		if subject == "" {
+			subject = camp.Subject
+		}
+	}
+	if subject == "" {
+		subject = t.Subject
+	}
+	return html, subject
 }
 
 // threadOpts make a send a reply to an earlier message (In-Reply-To), so mail clients thread it.
@@ -178,23 +208,13 @@ func (s *Service) deliver(ctx context.Context, msgID string, th threadOpts) (str
 	if err != nil {
 		return fail("failed", "failed", fmt.Errorf("template missing"))
 	}
-	html := t.HTML
-	subject := m.Subject
+	html, subject := messageContent(m, t, camp)
 	from, fromName, replyTo := deref(m.FromEmail), "", ""
 	if camp != nil {
-		if camp.Preheader != "" {
-			html = bodyRe.ReplaceAllString(html, `<body$1><div style="display:none;max-height:0;overflow:hidden;">`+strings.ReplaceAll(core.EscapeHTML(camp.Preheader), "$", "$$")+`</div>`)
-		}
-		if subject == "" {
-			subject = camp.Subject
-		}
 		if camp.FromEmail != "" {
 			from = camp.FromEmail
 		}
 		fromName, replyTo = camp.FromName, camp.ReplyTo
-	}
-	if subject == "" {
-		subject = t.Subject
 	}
 	email, err := s.buildEmail(ctx, buildOpts{HTML: html, Subject: subject, Vars: c.Fields(), Token: m.ID, Track: true})
 	if err != nil {

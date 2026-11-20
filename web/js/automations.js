@@ -10,7 +10,7 @@
     (blank !== undefined ? `<option value="">${esc(blank)}</option>` : '') +
     items.map((i) => `<option value="${esc(i.id)}" ${String(i.id) === String(selected ?? '') ? 'selected' : ''}>${esc(i.name)}</option>`).join('');
   const short = (t, n = 48) => (String(t || '').length > n ? `${String(t).slice(0, n)}…` : String(t || ''));
-  const toneFor = (group) => ({ Email: '', WhatsApp: 'wa', Contact: 'violet', Contacts: 'violet', 'Timing & logic': 'orange', 'Team & integrations': 'gray', Integrations: 'gray' }[group] || '');
+  const toneFor = (group) => ({ Email: '', WhatsApp: 'wa', Contact: 'violet', Contacts: 'violet', 'Opt-in': 'green', 'Timing & logic': 'orange', 'Team & integrations': 'gray', Integrations: 'gray' }[group] || '');
 
   // ------------------------------------------------------------------ recipes
   const RECIPES = [
@@ -73,6 +73,33 @@
       steps: (t) => [{ type: 'send_email', template_id: t('Promotion') }, { type: 'wait', amount: 5, unit: 'days' }, { type: 'stop_if', condition: 'opened' }, { type: 'send_email', template_id: t('Promotion') }],
     },
     {
+      key: 'form_welcome', title: 'Welcome confirmed subscribers', icon: 'check-circle',
+      desc: 'When someone confirms their subscription (double opt-in), tag them, send a welcome email and follow up three days later if they did not open it.',
+      trigger_type: 'subscription_confirmed', trigger_config: {},
+      steps: (t) => [{ type: 'add_tag', tag: 'subscriber' }, { type: 'send_email', template_id: t('Welcome Email') }, { type: 'wait', amount: 3, unit: 'days' },
+        { type: 'if_else', condition: 'not_opened', otherwise: 'stop' }, { type: 'send_email', template_id: t('Personal Follow-up') }],
+    },
+    {
+      key: 'tag_sequence', title: 'Start a sequence on a tag', icon: 'tag',
+      desc: 'When a tag is added to a contact, send an email series; stop early when they get the "customer" tag.',
+      trigger_type: 'tag_added', trigger_config: { tag: '' },
+      steps: (t) => [{ type: 'send_email', template_id: t('Welcome Email') }, { type: 'wait_until', condition: 'has_tag', tag: 'customer', amount: 3, unit: 'days', on_timeout: 'continue' },
+        { type: 'stop_if', condition: 'has_tag', tag: 'customer' }, { type: 'send_email', template_id: t('Promotion') }],
+    },
+    {
+      key: 'click_tag', title: 'Tag people who click a link', icon: 'pointer',
+      desc: 'When a contact clicks a link whose address contains a word (for example /pricing), tag them as interested.',
+      trigger_type: 'link_clicked', trigger_config: { url_contains: '' },
+      steps: () => [{ type: 'add_tag', tag: 'interested' }, { type: 'remove_tag', tag: 'cold' }],
+    },
+    {
+      key: 'engagement_tags', title: 'Tag engaged and inactive contacts', icon: 'filter',
+      desc: 'After an email, wait a week: tag openers "engaged", and tag the rest "inactive" so you can exclude them from campaigns.',
+      trigger_type: 'email_sent', trigger_config: {},
+      steps: () => [{ type: 'wait', amount: 7, unit: 'days' }, { type: 'if_else', condition: 'opened', skip: 2 }, { type: 'add_tag', tag: 'engaged' }, { type: 'stop_if', condition: 'opened' },
+        { type: 'add_tag', tag: 'inactive' }],
+    },
+    {
       key: 'unsub_sync', title: 'Sync unsubscribes to ChatDaddy', icon: 'user-x',
       desc: 'When someone unsubscribes from email, tag them in ChatDaddy so your WhatsApp team knows.',
       trigger_type: 'unsubscribed', trigger_config: {},
@@ -105,10 +132,21 @@
       case 'unsubscribed': return 'a contact unsubscribes';
       case 'contact_added': return `a contact joins ${c.list_id ? `"${short(ctx.listName(c.list_id), 30)}"` : 'any list'}`;
       case 'tag_added': return `the tag "${c.tag || '…'}" is added`;
+      case 'tag_removed': return `the tag "${c.tag || '…'}" is removed`;
+      case 'list_removed': return `a contact leaves ${c.list_id ? `"${short(ctx.listName(c.list_id), 30)}"` : 'any list'}`;
+      case 'form_submitted': return `${c.form_id ? `the form "${short(ctx.formName(c.form_id), 30)}"` : 'any subscribe form'} is submitted`;
+      case 'subscription_confirmed': return `a contact confirms their subscription${c.form_id ? ` from "${short(ctx.formName(c.form_id), 30)}"` : ''}`;
       case 'whatsapp_received': return `a WhatsApp message${c.keywords ? ` mentioning "${short(c.keywords, 30)}"` : ''} arrives`;
       case 'webhook_received': return `a webhook${c.event ? ` "${c.event}"` : ''} is received`;
       default: return 'you enrol contacts manually';
     }
+  }
+
+  /** A condition in words, with the tag or list it asks about. */
+  function condText(s, ctx) {
+    const text = C().STOP_CONDITIONS[s.condition] || s.condition || '…';
+    const about = /_list$/.test(s.condition || '') ? short(ctx.listName(s.list_id) || '…', 30) : (s.tag || '…');
+    return text.replace('…', `"${about}"`);
   }
 
   function stepSummary(s, ctx) {
@@ -117,7 +155,11 @@
       case 'send_whatsapp': return s.template_name ? `Send WhatsApp template "${s.template_name}"` : `Send WhatsApp: "${short(s.text || '…', 40)}"`;
       case 'chatdaddy_contact': return `Sync to ChatDaddy${s.tags ? ` with tags ${short(s.tags, 30)}` : ''}`;
       case 'wait': return `Wait ${s.amount ?? 1} ${s.unit || 'days'}`;
-      case 'stop_if': return `Stop if contact ${(C().STOP_CONDITIONS[s.condition] || s.condition || '…').replace('…', `"${s.tag || '…'}"`)}`;
+      case 'stop_if': return `Stop if contact ${condText(s, ctx)}`;
+      case 'if_else': return `Only continue if contact ${condText(s, ctx)}; otherwise ${s.otherwise === 'stop' ? 'end' : `skip ${Math.max(1, Number(s.skip) || 1)} step${Math.max(1, Number(s.skip) || 1) === 1 ? '' : 's'}`}`;
+      case 'wait_until': return `Wait until contact ${condText(s, ctx)} (up to ${s.amount || 7} ${s.unit || 'days'}, then ${s.on_timeout === 'continue' ? 'carry on' : 'end'})`;
+      case 'start_automation': return `Start automation "${short(ctx.automationName(s.automation_id) || '…', 30)}"`;
+      case 'stop_automation': return s.automation_id ? `Stop automation "${short(ctx.automationName(s.automation_id) || '…', 30)}"` : 'Stop all other automations';
       case 'add_tag': return `Add tag "${s.tag || '…'}"`;
       case 'remove_tag': return `Remove tag "${s.tag || '…'}"`;
       case 'add_to_list': return `Add to list "${short(ctx.listName(s.list_id) || '…', 30)}"`;
@@ -131,8 +173,8 @@
 
   // ------------------------------------------------------------------ list page
   App.route(/^#\/automations$/, async (root) => {
-    const [meta, list, templates, lists, campaigns] = await Promise.all([App.getMeta(), api.get('/automations'), api.get('/templates'), api.get('/lists'), api.get('/campaigns')]);
-    const ctx = context(templates, lists, campaigns);
+    const [meta, list, templates, lists, campaigns, forms] = await Promise.all([App.getMeta(), api.get('/automations'), api.get('/templates'), api.get('/lists'), api.get('/campaigns'), api.get('/forms')]);
+    const ctx = context(templates, lists, campaigns, forms, list);
     root.innerHTML = `
       ${App.pageHead({
         title: 'Automations',
@@ -179,18 +221,18 @@
     root.querySelectorAll('[data-recipe]').forEach((b) => (b.onclick = () => { location.hash = `#/automations/new/${b.dataset.recipe}`; }));
   });
 
-  function context(templates, lists, campaigns) {
+  function context(templates, lists, campaigns, forms = [], automations = []) {
     const byId = (arr) => Object.fromEntries(arr.map((x) => [String(x.id), x.name]));
-    const t = byId(templates); const l = byId(lists); const c = byId(campaigns);
-    return { templateName: (id) => t[id], listName: (id) => l[id], campaignName: (id) => c[id] };
+    const t = byId(templates); const l = byId(lists); const c = byId(campaigns); const f = byId(forms); const a = byId(automations);
+    return { templateName: (id) => t[id], listName: (id) => l[id], campaignName: (id) => c[id], formName: (id) => f[id], automationName: (id) => a[id] };
   }
 
   // ------------------------------------------------------------------ builder
   App.route(/^#\/automations\/(new\/[\w-]+|new\?campaign=[\w-]+|[\w-]+)$/, async (root, param) => {
-    const [meta, templates, lists, campaigns, facets, settings] = await Promise.all([
-      App.getMeta(), api.get('/templates'), api.get('/lists'), api.get('/campaigns'), api.get('/contacts/facets'), api.get('/settings'),
+    const [meta, templates, lists, campaigns, facets, settings, forms, automations] = await Promise.all([
+      App.getMeta(), api.get('/templates'), api.get('/lists'), api.get('/campaigns'), api.get('/contacts/facets'), api.get('/settings'), api.get('/forms'), api.get('/automations'),
     ]);
-    const ctx = context(templates, lists, campaigns);
+    const ctx = context(templates, lists, campaigns, forms, automations);
     const findTpl = (prefix) => (templates.find((x) => x.name.toLowerCase().startsWith(prefix.toLowerCase())) || {}).id || '';
 
     let a;
@@ -226,12 +268,25 @@
           'Fires for every new email from a known contact (including replies). To answer unknown senders automatically, use <a href="#/autoreply">Auto-reply</a>.');
         case 'whatsapp_received': return field('Only if the message mentions <span class="hint-inline">(optional)</span>', `<input type="text" data-cfg="keywords" value="${esc(c.keywords || '')}" placeholder="price, info">`, 'Needs the ChatDaddy webhook from Settings → Inbound webhooks.');
         case 'contact_added': return field('List', `<select data-cfg="list_id">${opts(lists, c.list_id, 'Any list')}</select>`);
-        case 'tag_added': return field('Tag', `<input type="text" data-cfg="tag" list="tag-list" value="${esc(c.tag || '')}" placeholder="hot-lead">`);
+        case 'list_removed': return field('List', `<select data-cfg="list_id">${opts(lists, c.list_id, 'Any list')}</select>`, 'Fires when you remove the contact, or when they leave a public list on the email preference page.');
+        case 'tag_added':
+        case 'tag_removed': return field('Tag', `<input type="text" data-cfg="tag" list="tag-list" value="${esc(c.tag || '')}" placeholder="hot-lead">`, 'Leave empty to run for any tag.');
+        case 'form_submitted': return field('Form', `<select data-cfg="form_id">${opts(forms, c.form_id, 'Any form')}</select>`,
+          'For a double opt-in form this fires once the person has confirmed, so the emails that follow can be delivered. Create forms in <a href="#/forms">Subscribe forms</a>.');
+        case 'subscription_confirmed': return field('Form <span class="hint-inline">(optional)</span>', `<select data-cfg="form_id">${opts(forms, c.form_id, 'Any sign-up')}</select>`,
+          'Fires when a pending contact clicks the link in the confirmation email.');
         case 'webhook_received': return field('Event name <span class="hint-inline">(optional)</span>', `<input type="text" data-cfg="event" value="${esc(c.event || '')}" placeholder="form_submitted">`,
           `Matches the <code>event</code> field your app sends. Webhook URL: <a href="#/settings">Settings → Inbound webhooks</a>.`);
         case 'manual': return '<p class="muted" style="margin:0">Save the automation, then use <b>Enrol contacts</b> to start it for a list.</p>';
         default: return '<p class="muted" style="margin:0">No extra settings.</p>';
       }
+    }
+
+    /** The condition picker shared by Stop if, Only continue if and Wait until. */
+    function condFields(s, label) {
+      return field(label, `<select data-k="condition">${Object.entries(meta.stopConditions).map(([k, v]) => `<option value="${k}" ${s.condition === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>`, 'Opens, clicks and replies count from the moment the contact entered this automation.') +
+        (['has_tag', 'not_has_tag'].includes(s.condition) ? field('Tag', inp('tag', s.tag, 'list="tag-list"')) : '') +
+        (['in_list', 'not_in_list'].includes(s.condition) ? field('List', `<select data-k="list_id">${opts(lists, s.list_id, '— choose a list —')}</select>`) : '');
     }
 
     function stepFields(s) {
@@ -261,8 +316,24 @@
             <div class="field" style="max-width:180px">${App.fieldLabel('&nbsp;')}<select data-k="unit">${['minutes', 'hours', 'days'].map((u) => `<option ${(s.unit || 'days') === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div></div>
             <div class="row" style="gap:6px;margin-top:-8px">${[[1, 'hours', '1 hour'], [1, 'days', '1 day'], [3, 'days', '3 days'], [7, 'days', '1 week']].map(([n, u, l]) => `<button type="button" class="btn sm" data-preset="${n}|${u}">${l}</button>`).join('')}</div>`;
         case 'stop_if':
-          return field('Stop the automation if the contact…', `<select data-k="condition">${Object.entries(meta.stopConditions).map(([k, v]) => `<option value="${k}" ${s.condition === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>`, 'Checked from the moment the contact entered this automation.') +
-            (['has_tag', 'not_has_tag'].includes(s.condition) ? field('Tag', inp('tag', s.tag, 'list="tag-list"')) : '');
+          return condFields(s, 'Stop the automation if the contact…');
+        case 'if_else': {
+          const other = s.otherwise === 'stop' ? 'stop' : 'skip';
+          return condFields(s, 'Carry on only if the contact…') +
+            `<div class="row">${field('Otherwise', `<select data-k="otherwise"><option value="skip" ${other === 'skip' ? 'selected' : ''}>Skip the next steps, then carry on</option><option value="stop" ${other === 'stop' ? 'selected' : ''}>End the automation for this contact</option></select>`)}
+              ${other === 'skip' ? `<div class="field" style="max-width:170px">${App.fieldLabel('Steps to skip')}<input type="number" min="1" data-k="skip" value="${esc(s.skip ?? 1)}"></div>` : ''}</div>
+            <div class="hint" style="margin-top:-8px">Use it to branch: the steps right after this one run only for contacts who match; everyone continues with the steps after those.</div>`;
+        }
+        case 'wait_until':
+          return condFields(s, 'Hold the contact here until they…') +
+            `<div class="row"><div class="field" style="max-width:140px">${App.fieldLabel('For up to')}<input type="number" min="1" data-k="amount" value="${esc(s.amount ?? 7)}"></div>
+              <div class="field" style="max-width:160px">${App.fieldLabel('&nbsp;')}<select data-k="unit">${['minutes', 'hours', 'days'].map((u) => `<option ${(s.unit || 'days') === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
+              ${field('If that time passes', `<select data-k="on_timeout"><option value="stop" ${s.on_timeout !== 'continue' ? 'selected' : ''}>End the automation</option><option value="continue" ${s.on_timeout === 'continue' ? 'selected' : ''}>Carry on anyway</option></select>`)}</div>
+            <div class="hint" style="margin-top:-8px">A goal: as soon as the condition holds (checked every few minutes) the contact moves to the next step.</div>`;
+        case 'start_automation':
+          return field('Automation', `<select data-k="automation_id">${opts(automations.filter((x) => x.id !== a.id), s.automation_id, '— choose an automation —')}</select>`, 'The contact is enrolled unless they are already in it. It runs when that automation is active.');
+        case 'stop_automation':
+          return field('Automation', `<select data-k="automation_id">${opts(automations.filter((x) => x.id !== a.id), s.automation_id, 'All other automations')}</select>`, 'Ends the contact\'s run there, for example when they buy or reply.');
         case 'add_tag':
         case 'remove_tag':
           return field('Tag', inp('tag', s.tag, 'list="tag-list" placeholder="hot-lead"'));
@@ -373,7 +444,8 @@
         wide: true,
         onMount: (el, close) => el.querySelectorAll('[data-type]').forEach((b) => (b.onclick = () => {
           const type = b.dataset.type;
-          const defaults = { wait: { amount: 1, unit: 'days' }, stop_if: { condition: 'replied' }, notify: { channel: 'email' } }[type] || {};
+          const defaults = { wait: { amount: 1, unit: 'days' }, stop_if: { condition: 'replied' }, notify: { channel: 'email' },
+            if_else: { condition: 'has_tag', otherwise: 'skip', skip: 1 }, wait_until: { condition: 'clicked', amount: 7, unit: 'days', on_timeout: 'stop' } }[type] || {};
           a.steps.splice(index, 0, { type, ...defaults });
           open = index;
           dirty = true;

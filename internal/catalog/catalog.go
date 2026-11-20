@@ -71,5 +71,6 @@ func IndustryKeywords(name string) []string {
 	return []string{name}
 }
 
-func IsTrigger(t string) bool  { return slices.Contains(C.Triggers, t) }
-func IsStepType(t string) bool { return slices.Contains(C.StepTypes, t) }
+func IsTrigger(t string) bool   { return slices.Contains(C.Triggers, t) }
+func IsCondition(c string) bool { return slices.Contains(C.StopConditions, c) }
+func IsStepType(t string) bool  { return slices.Contains(C.StepTypes, t) }

@@ -3,10 +3,12 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/grandpine-capital/gpc-emailing/internal/core"
 	"github.com/grandpine-capital/gpc-emailing/internal/ids"
 	"github.com/grandpine-capital/gpc-emailing/internal/store"
 )
@@ -127,23 +129,52 @@ func (s *Service) Click(ctx context.Context, token, key string) (string, error) 
 // UnsubscribeContact unsubscribes a contact, stops their automations and fires unsubscribed.
 // False when they were already unsubscribed (or unknown).
 func (s *Service) UnsubscribeContact(ctx context.Context, contactID string, m *Message) (bool, error) {
+	return s.optOut(ctx, contactID, m, "unsubscribed", "")
+}
+
+// optOut moves a contact to unsubscribed (their choice, with the reason they gave) or complained
+// (they marked an e-mail as spam), stops their automations and fires unsubscribed. False when
+// nothing changed.
+func (s *Service) optOut(ctx context.Context, contactID string, m *Message, status, reason string) (bool, error) {
 	var changed bool
 	err := s.db.InTx(ctx, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `UPDATE contacts SET status = 'unsubscribed', unsubscribed_at = $2 WHERE id = $1 AND status <> 'unsubscribed'`, contactID, s.now())
-		if err != nil {
+		var old string
+		if err := tx.QueryRow(ctx, `SELECT status FROM contacts WHERE id = $1 FOR UPDATE`, contactID).Scan(&old); errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		} else if err != nil {
 			return err
 		}
-		changed = tag.RowsAffected() > 0
-		if changed && m != nil && m.CampaignID != nil {
-			_, err = tx.Exec(ctx, `UPDATE campaigns SET stat_unsubscribed = stat_unsubscribed + 1 WHERE id = $1`, *m.CampaignID)
+		// A complaint outranks an unsubscribe; neither happens twice.
+		if old == status || (status == "unsubscribed" && old == "complained") {
+			if reason != "" && old == "unsubscribed" {
+				_, err := tx.Exec(ctx, `UPDATE contacts SET unsubscribe_reason = $2 WHERE id = $1 AND unsubscribe_reason = ''`, contactID, reason)
+				return err
+			}
+			return nil
 		}
-		return err
+		q := `UPDATE contacts SET status = 'unsubscribed', unsubscribed_at = $2, unsubscribe_reason = $3, pending_optin = NULL WHERE id = $1`
+		if status == "complained" {
+			q = `UPDATE contacts SET status = 'complained', complained_at = $2, unsubscribed_at = coalesce(unsubscribed_at, $2),
+				unsubscribe_reason = CASE WHEN unsubscribe_reason = '' THEN $3 ELSE unsubscribe_reason END, pending_optin = NULL WHERE id = $1`
+		}
+		if _, err := tx.Exec(ctx, q, contactID, s.now(), reason); err != nil {
+			return err
+		}
+		changed = true
+		if m != nil && m.CampaignID != nil && old != "unsubscribed" && old != "complained" {
+			_, err := tx.Exec(ctx, `UPDATE campaigns SET stat_unsubscribed = stat_unsubscribed + 1 WHERE id = $1`, *m.CampaignID)
+			return err
+		}
+		return nil
 	})
 	if err != nil || !changed {
 		return false, err
 	}
 	s.stopRunsFor(ctx, contactID)
-	ev := Event{ContactID: contactID}
+	ev := Event{ContactID: contactID, Text: reason}
+	if status == "complained" {
+		ev.Event = "complaint"
+	}
 	if m != nil {
 		ev.CampaignID, ev.MessageID = deref(m.CampaignID), m.ID
 	}
@@ -153,13 +184,18 @@ func (s *Service) UnsubscribeContact(ctx context.Context, contactID string, m *M
 
 // Unsubscribe handles the unsubscribe page and one-click unsubscribe. Unknown tokens are a no-op.
 func (s *Service) Unsubscribe(ctx context.Context, token string) (bool, error) {
+	return s.UnsubscribeWithReason(ctx, token, "")
+}
+
+// UnsubscribeWithReason is Unsubscribe with the reason the person chose on the page.
+func (s *Service) UnsubscribeWithReason(ctx context.Context, token, reason string) (bool, error) {
 	m, err := s.messageByToken(ctx, token)
 	if IsNotFound(err) {
 		return false, nil
 	} else if err != nil {
 		return false, err
 	}
-	return s.UnsubscribeContact(ctx, m.ContactID, m)
+	return s.optOut(ctx, m.ContactID, m, "unsubscribed", core.Truncate(strings.TrimSpace(reason), 300))
 }
 
 // ValidUnsubscribeToken reports whether the unsubscribe page should offer the button.
