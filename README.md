@@ -123,6 +123,10 @@ receiving region (SES does not receive mail in ap-southeast-5). Then:
    `SETTINGS_ENCRYPTION_KEY`, `PUBLIC_BASE_URL`, `KEYCLOAK_*`, `SES_REGION`, `MAIL_FROM`,
    `SES_CONFIGURATION_SET`, `SES_EVENTS_QUEUE_URL`, `REPLY_DOMAIN`, `SES_INBOUND_QUEUE_URL`.
 
+A release keeps serving while the next one's migration runs: a read that meets a table the
+migration has just changed is retried once (`internal/store`), so adding columns is safe;
+dropping or renaming a column the running release reads is not, and needs two releases.
+
 `SETTINGS_ENCRYPTION_KEY` and `PUBLIC_BASE_URL` must stay the same once mail has gone out:
 the key signs click-tracking links; the URL is in every tracking and unsubscribe link.
 
