@@ -16,6 +16,7 @@ import (
 
 	"github.com/grandpine-capital/gpc-emailing/internal/app"
 	"github.com/grandpine-capital/gpc-emailing/internal/auth"
+	"github.com/grandpine-capital/gpc-emailing/internal/core"
 	"github.com/grandpine-capital/gpc-emailing/internal/store"
 )
 
@@ -224,7 +225,12 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusConflict, "The database refused that change: "+store.ConstraintOf(err))
 	default:
 		s.log.ErrorContext(r.Context(), "request failed", "err", err, "path", r.URL.Path)
-		writeError(w, http.StatusInternalServerError, "internal error")
+		msg := "internal error"
+		if user(r).IsAdmin() {
+			// Admins see the cause, so a fault can be reported from the screen without the server log.
+			msg += ": " + core.Truncate(err.Error(), 300)
+		}
+		writeError(w, http.StatusInternalServerError, msg)
 	}
 }
 

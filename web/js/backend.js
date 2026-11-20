@@ -33,7 +33,11 @@ async function call(method, path, body) {
   }
   const data = await res.json().catch(() => null);
   if (res.status === 401) onSignedOut();
-  if (!res.ok) throw httpError(res.status, (data && data.error) || `The server answered HTTP ${res.status}.`);
+  if (!res.ok) {
+    const what = (data && data.error) || `The server answered HTTP ${res.status}.`;
+    // A server fault names the request that failed, so it can be reported from the screen.
+    throw httpError(res.status, res.status >= 500 ? `${what} (${method} ${path.split('?')[0]})` : what);
+  }
   return data;
 }
 

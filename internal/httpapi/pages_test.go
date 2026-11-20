@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"context"
 	"encoding/base64"
 	"io"
 	"net/http"
@@ -191,3 +192,19 @@ func decodeParts(raw string) string {
 }
 
 func base64Decode(s string) ([]byte, error) { return base64.StdEncoding.DecodeString(s) }
+
+// A server fault tells an admin its cause; everyone else gets only "internal error".
+func TestInternalErrorDetailIsForAdmins(t *testing.T) {
+	srv, svc, _ := server(t)
+	if _, err := svc.DB().Pool.Exec(context.Background(), `ALTER TABLE forms RENAME TO forms_gone`); err != nil {
+		t.Fatal(err)
+	}
+	code, out := call(t, srv, "GET", "/api/forms/x", "dev:ann:admin", "")
+	if msg, _ := out["error"].(string); code != 500 || !strings.Contains(msg, "internal error: ") || !strings.Contains(msg, "forms") {
+		t.Errorf("admin: %d %v", code, out)
+	}
+	code, out = call(t, srv, "GET", "/api/forms/x", "dev:eva:editor", "")
+	if out["error"] != "internal error" || code != 500 {
+		t.Errorf("editor: %d %v", code, out)
+	}
+}
