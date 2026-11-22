@@ -29,7 +29,10 @@ type Settings struct {
 	ChatDaddyAccountID       string `json:"chatdaddy_account_id"`
 	WhatsAppPhoneNumberID    string `json:"whatsapp_phone_number_id"`
 	WhatsAppTemplateLanguage string `json:"whatsapp_template_language"`
-	Timezone                 string `json:"timezone"`
+	// GPCWhatsAppURL is the GPC-WhatsApp platform payment WhatsApp messages go through (with the
+	// secret gpc_whatsapp_key, an API key of the company there).
+	GPCWhatsAppURL string `json:"gpc_whatsapp_url"`
+	Timezone       string `json:"timezone"`
 }
 
 func defaultSettings() Settings {
@@ -41,12 +44,12 @@ func defaultSettings() Settings {
 }
 
 // SecretKeys are the integration secrets admins may set; they are stored sealed.
-var SecretKeys = []string{"hunter_api_key", "apollo_api_key", "google_cse_key", "google_cse_cx", "chatdaddy_token", "whatsapp_token"}
+var SecretKeys = []string{"hunter_api_key", "apollo_api_key", "google_cse_key", "google_cse_cx", "chatdaddy_token", "whatsapp_token", "gpc_whatsapp_key"}
 
 var textSettings = map[string]bool{
 	"from_name": true, "reply_to": true, "company_address": true, "crawler_user_agent": true, "default_from_email": true,
 	"default_country_code": true, "timezone": true, "whatsapp_provider": true, "chatdaddy_account_id": true,
-	"whatsapp_phone_number_id": true, "whatsapp_template_language": true,
+	"whatsapp_phone_number_id": true, "whatsapp_template_language": true, "gpc_whatsapp_url": true,
 }
 
 // Settings reads the workspace settings over the defaults.
@@ -212,6 +215,13 @@ func (s *Service) UpdateSettings(ctx context.Context, in map[string]any) error {
 	if tz, ok := app["timezone"].(string); ok && tz != "" {
 		if _, err := time.LoadLocation(tz); err != nil {
 			return userErr("Unknown time zone " + tz + " (use a name such as Asia/Kuala_Lumpur)")
+		}
+	}
+	if u, ok := app["gpc_whatsapp_url"].(string); ok {
+		app["gpc_whatsapp_url"] = strings.TrimRight(u, "/")
+		// Spelled out: staging's isWebURL (optin.go) is not on this branch yet.
+		if u != "" && !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
+			return userErr("The GPC WhatsApp address must start with https:// (or http://)")
 		}
 	}
 	if from, ok := app["default_from_email"].(string); ok {

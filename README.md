@@ -94,6 +94,20 @@ a failed send is retried by the worker (1, 2, 4 … minutes, 8 tries), and SES b
 complaints mark the row. Staff see them at `GET /api/transactional?source=payment&reference=<order id>`
 and resend with `POST /api/transactional/{id}/resend`.
 
+**WhatsApp.** Each payment e-mail can also go to the buyer's WhatsApp (Transactional page → *Also send
+on WhatsApp*; off for every event until ticked), through GPC-WhatsApp's API (`POST /api/v1/messages`), so
+the message sits in that platform's inbox and its opt-outs and daily limits apply. Settings →
+Integrations → *GPC WhatsApp* holds the platform's address and an API key of the company there (scopes
+`read` and `messages:write`). Each event picks its number: the company's personal number with free text
+(merge tags as in the e-mail; a line whose tags all come out empty is left out), or a WABA number with an
+approved template whose body parameters are merge tags. The message is a `transactional` row with
+`channel = 'whatsapp'` and `to_phone` in international digits (a local `0…` number takes the default
+country code, else 60), made once per event and order. Its sends carry the idempotency key
+`emailing:<row id>#<resends>`, so the worker's retries reach the customer once and a staff resend is a new
+message; a 400, 401, 403 or 404 fails at once, anything else is retried like e-mail, and none of it waits
+for SES. The CRM (GPC-Lead) can send its own WhatsApp on payment events: switch that off before ticking
+these, or buyers get two.
+
 The **Transactional** page in the dashboard sets, for each of these e-mails, whether it is on
 and which template it uses, and the sender (empty = `BILLING_FROM` / `BILLING_FROM_NAME`); it
 lists everything sent, searchable by order number or address, with Resend. Admins change the
