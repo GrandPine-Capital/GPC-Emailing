@@ -230,6 +230,16 @@ func (s *Service) UpdateSettings(ctx context.Context, in map[string]any) error {
 			return userErr("Redirect addresses must start with https:// or http://")
 		}
 	}
+	if from, ok := app["default_from_email"].(string); ok {
+		from = strings.ToLower(from)
+		app["default_from_email"] = from
+		// Asked of SES only when the address changes, so an autosave of other fields costs nothing.
+		if from != "" && from != strings.ToLower(s.Settings(ctx).DefaultFromEmail) {
+			if err := s.checkSender(ctx, from); err != nil {
+				return err
+			}
+		}
+	}
 	if err := s.mergeDoc(ctx, s.db.Pool, "app", app); err != nil {
 		return err
 	}

@@ -78,7 +78,7 @@ const (
 )
 
 func TestRolesAndRoutes(t *testing.T) {
-	srv, _, _ := server(t)
+	srv, _, mail := server(t)
 	if code, _ := call(t, srv, "GET", "/api/meta", "", ""); code != 401 {
 		t.Errorf("no token: %d", code)
 	}
@@ -107,6 +107,30 @@ func TestRolesAndRoutes(t *testing.T) {
 	_, s = call(t, srv, "GET", "/api/settings", admin, "")
 	if s["hunter_api_key"] != "hk" || !strings.Contains(s["generic_webhook_url"].(string), "https://mail.test/hook?k=") {
 		t.Errorf("admin settings: %v", s)
+	}
+
+	// the default sender must be at a verified SES identity; empty goes back to the server default
+	if code, _ := call(t, srv, "PUT", "/api/settings", admin, `{"default_from_email":"news@elsewhere.test"}`); code != 400 {
+		t.Errorf("unverified default sender: %d", code)
+	}
+	if code, _ := call(t, srv, "PUT", "/api/settings", admin, `{"default_from_email":"not an address"}`); code != 400 {
+		t.Errorf("default sender that is no address: %d", code)
+	}
+	if code, _ := call(t, srv, "PUT", "/api/settings", admin, `{"default_from_email":"News@GrandPine.test"}`); code != 200 {
+		t.Errorf("verified default sender: %d", code)
+	}
+	if _, s = call(t, srv, "GET", "/api/settings", admin, ""); s["default_from_email"] != "news@grandpine.test" {
+		t.Errorf("default sender saved: %v", s["default_from_email"])
+	}
+	if code, _ := call(t, srv, "POST", "/api/settings/test-mail", editor, ""); code != 403 {
+		t.Errorf("editor test mail: %d", code)
+	}
+	if code, out := call(t, srv, "POST", "/api/settings/test-mail", admin, ""); code != 200 || out["from"] != "news@grandpine.test" ||
+		len(mail.sent) != 1 || !strings.Contains(mail.sent[0], "<news@grandpine.test>") {
+		t.Errorf("test mail: %d %v, sent %d", code, out, len(mail.sent))
+	}
+	if code, _ := call(t, srv, "PUT", "/api/settings", admin, `{"default_from_email":""}`); code != 200 {
+		t.Errorf("clear default sender: %d", code)
 	}
 
 	// contact ids are e-mail addresses in the path
