@@ -60,17 +60,23 @@
   // ================================================================ Templates
   route(/^#\/templates$/, async (root) => {
     const list = await api.get('/templates');
+    const cats = [...new Set(list.map((t) => t.category))].sort();
     root.innerHTML = `
       <div class="page-head"><div><h1>Templates</h1><div class="subtitle">Design emails with drag &amp; drop or HTML. Standard templates included.</div></div>
         <div class="actions"><a class="btn" href="#/templates/library">${App.icon('sparkles', 17)}Template library</a><a class="btn" href="#/templates/new-html">${App.icon('code', 17)}New HTML template</a><a class="btn primary" href="#/templates/new-dragdrop">${App.icon('plus', 17)}New drag &amp; drop template</a></div></div>
+      ${cats.length > 1 ? `<div class="row" id="tpl-cats" style="gap:6px;margin-bottom:16px;flex-wrap:wrap"><button class="btn sm primary" data-cat="">All (${list.length})</button>${cats.map((c) => `<button class="btn sm" data-cat="${esc(c)}">${esc(c)} (${list.filter((t) => t.category === c).length})</button>`).join('')}</div>` : ''}
       <div class="tpl-grid">${list.map((t) => `
-        <div class="tpl-card" data-id="${t.id}">
+        <div class="tpl-card" data-id="${t.id}" data-category="${esc(t.category)}">
           <div class="tpl-thumb" data-open><iframe loading="lazy" sandbox="" data-html="${t.id}"></iframe></div>
           <div class="meta"><div class="name">${esc(t.name)}</div>
             <div class="muted" style="font-size:12px">${t.is_standard ? '<span class="badge blue">standard</span> ' : ''}<span class="badge">${esc(t.category)}</span> <span class="badge">${t.mode === 'html' ? 'HTML' : 'drag & drop'}</span></div>
             <div class="muted" style="font-size:12px;margin-top:4px">${esc(t.subject)}</div></div>
           <div class="acts"><a class="btn sm" href="#/templates/${t.id}">Edit</a><button class="btn sm" data-dup>Duplicate</button><a class="btn sm" href="#/campaigns/new?template=${t.id}">Use</a><button class="btn sm danger" data-del>Delete</button></div>
         </div>`).join('')}</div>`;
+    root.querySelectorAll('#tpl-cats [data-cat]').forEach((b) => (b.onclick = () => {
+      root.querySelectorAll('#tpl-cats [data-cat]').forEach((x) => x.classList.toggle('primary', x === b));
+      root.querySelectorAll('.tpl-card').forEach((c) => { c.style.display = !b.dataset.cat || c.dataset.category === b.dataset.cat ? '' : 'none'; });
+    }));
     const byId = Object.fromEntries(list.map((t) => [t.id, t]));
     root.querySelectorAll('iframe[data-html]').forEach((f) => { f.srcdoc = byId[f.dataset.html].html; });
     root.querySelectorAll('.tpl-card').forEach((card) => {
