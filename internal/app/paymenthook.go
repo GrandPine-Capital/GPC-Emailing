@@ -32,6 +32,7 @@ type paymentEvent struct {
 	Customer   struct {
 		Name  string `json:"name"`
 		Email string `json:"email"`
+		Phone string `json:"phone"`
 	} `json:"customer"`
 	Product          string      `json:"product"`
 	Amount           json.Number `json:"amount"`
@@ -134,9 +135,9 @@ func VerifySignature(secret string, body []byte, sig string) bool {
 	return hmac.Equal(want, mac.Sum(nil))
 }
 
-// HandlePaymentEvent queues (and tries at once to send) the e-mail a payment event calls for.
-// Events with no template or no customer e-mail are acknowledged and ignored, so Payment does
-// not retry them.
+// HandlePaymentEvent queues (and tries at once to send) the e-mail a payment event calls for,
+// and its WhatsApp message when that is switched on. Events with no template or no customer
+// e-mail are acknowledged and ignored, so Payment does not retry them.
 func (s *Service) HandlePaymentEvent(ctx context.Context, sig string, body []byte) (map[string]any, error) {
 	if s.PaymentEventSecret == "" {
 		return nil, ErrHookOff
@@ -155,12 +156,40 @@ func (s *Service) HandlePaymentEvent(ctx context.Context, sig string, body []byt
 		return map[string]any{"ok": true, "ignored": "no e-mail for " + ev.Type}, nil
 	}
 	set := s.txnSettings(ctx).Events[ev.Type]
-	if set.Off {
-		return map[string]any{"ok": true, "ignored": te.Label + " is turned off (Transactional page)"}, nil
+	vars := paymentVars(ev)
+	out := map[string]any{"ok": true}
+	switch {
+	case set.Off:
+		out["ignored"] = te.Label + " is turned off (Transactional page)"
+	case !core.IsEmail(ev.Customer.Email):
+		out["ignored"] = "no customer e-mail"
+	default:
+		id, created, err := s.QueueTransactional(ctx, TxnRequest{
+			Source: "payment", Key: ev.Type + ":" + ev.PaymentID, Template: te.DefaultKey, TemplateID: set.TemplateID,
+			To: ev.Customer.Email, ToName: ev.Customer.Name, Reference: ev.PaymentID, Vars: vars,
+		})
+		if err != nil {
+			return nil, err
+		}
+		status, err := s.SendTransactional(ctx, id)
+		if err != nil {
+			// Recorded and queued: the worker retries. Payment need not.
+			s.log.Warn("payment e-mail not sent yet", "id", id, "type", ev.Type, "err", err)
+		}
+		out["id"], out["created"], out["status"] = id, created, status
 	}
-	if !core.IsEmail(ev.Customer.Email) {
-		return map[string]any{"ok": true, "ignored": "no customer e-mail"}, nil
+	if _, ok := whatsAppDefaultText[ev.Type]; ok && set.WhatsApp.On {
+		wa, err := s.queuePaymentWhatsApp(ctx, ev, te, vars)
+		if err != nil {
+			return nil, err
+		}
+		out["whatsapp"] = wa
 	}
+	return out, nil
+}
+
+// paymentVars are a payment event's merge values, for its e-mail and its WhatsApp message.
+func paymentVars(ev paymentEvent) map[string]string {
 	vars := map[string]string{
 		"order_id": ev.PaymentID, "item": ev.Product, "amount": formatAmount(ev.Amount, ev.Currency), "currency": ev.Currency,
 		"payment_method": methodLabel(ev.PaymentMethod, ev.Reference), "paid_at": localTime(ev.PaidAt),
@@ -188,19 +217,7 @@ func (s *Service) HandlePaymentEvent(ctx context.Context, sig string, body []byt
 			vars["charge_amount"] = vars["amount"]
 		}
 	}
-	id, created, err := s.QueueTransactional(ctx, TxnRequest{
-		Source: "payment", Key: ev.Type + ":" + ev.PaymentID, Template: te.DefaultKey, TemplateID: set.TemplateID,
-		To: ev.Customer.Email, ToName: ev.Customer.Name, Reference: ev.PaymentID, Vars: vars,
-	})
-	if err != nil {
-		return nil, err
-	}
-	status, err := s.SendTransactional(ctx, id)
-	if err != nil {
-		// Recorded and queued: the worker retries. Payment need not.
-		s.log.Warn("payment e-mail not sent yet", "id", id, "type", ev.Type, "err", err)
-	}
-	return map[string]any{"ok": true, "id": id, "created": created, "status": status}, nil
+	return vars
 }
 
 // Item is the product name.
