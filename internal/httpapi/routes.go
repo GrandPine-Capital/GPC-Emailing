@@ -340,6 +340,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 	adm("PUT "+p+"/transactional/config", withBody(func(w http.ResponseWriter, r *http.Request, b body) {
 		s.reply(w, r, ok, svc.SaveTransactionalConfig(r.Context(), b))
 	}))
+	adm("GET "+p+"/transactional/whatsapp-channels", func(w http.ResponseWriter, r *http.Request) {
+		v, err := svc.WhatsAppChannels(r.Context())
+		s.reply(w, r, v, err)
+	})
 	h("POST "+p+"/transactional/{id}/resend", func(w http.ResponseWriter, r *http.Request) {
 		st, err := svc.ResendTransactional(r.Context(), id(r))
 		s.reply(w, r, map[string]any{"ok": err == nil, "status": st}, err)
@@ -373,6 +377,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 		}
 		writeJSON(w, 200, map[string]any{"ok": true, "message": "Connected to Amazon SES (" + sv(m["region"]) + "). Sending as " + sv(m["default_from"]) + "; " +
 			strconv.Itoa(svc.RemainingToday(r.Context())) + " emails left today."})
+	})
+	adm("POST "+p+"/settings/test-mail", func(w http.ResponseWriter, r *http.Request) {
+		from, err := svc.SendSettingsTest(r.Context(), user(r).Email)
+		s.reply(w, r, map[string]any{"ok": true, "from": from, "to": user(r).Email}, err)
 	})
 	adm("POST "+p+"/senders/refresh", func(w http.ResponseWriter, r *http.Request) {
 		list, err := svc.RefreshSenders(r.Context())

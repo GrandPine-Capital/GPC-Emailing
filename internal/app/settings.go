@@ -29,7 +29,10 @@ type Settings struct {
 	ChatDaddyAccountID       string `json:"chatdaddy_account_id"`
 	WhatsAppPhoneNumberID    string `json:"whatsapp_phone_number_id"`
 	WhatsAppTemplateLanguage string `json:"whatsapp_template_language"`
-	Timezone                 string `json:"timezone"`
+	// GPCWhatsAppURL is the GPC-WhatsApp platform payment WhatsApp messages go through (with the
+	// secret gpc_whatsapp_key, an API key of the company there).
+	GPCWhatsAppURL string `json:"gpc_whatsapp_url"`
+	Timezone       string `json:"timezone"`
 	// Opt-in and opt-out: the double opt-in e-mail, where a confirmed subscriber lands, and
 	// whether the unsubscribe page asks why.
 	OptinTemplateID        string `json:"optin_template_id"`
@@ -50,12 +53,12 @@ func defaultSettings() Settings {
 }
 
 // SecretKeys are the integration secrets admins may set; they are stored sealed.
-var SecretKeys = []string{"hunter_api_key", "apollo_api_key", "google_cse_key", "google_cse_cx", "chatdaddy_token", "whatsapp_token"}
+var SecretKeys = []string{"hunter_api_key", "apollo_api_key", "google_cse_key", "google_cse_cx", "chatdaddy_token", "whatsapp_token", "gpc_whatsapp_key"}
 
 var textSettings = map[string]bool{
 	"from_name": true, "reply_to": true, "company_address": true, "crawler_user_agent": true, "default_from_email": true,
 	"default_country_code": true, "timezone": true, "whatsapp_provider": true, "chatdaddy_account_id": true,
-	"whatsapp_phone_number_id": true, "whatsapp_template_language": true,
+	"whatsapp_phone_number_id": true, "whatsapp_template_language": true, "gpc_whatsapp_url": true,
 	"optin_template_id": true, "optin_subject": true, "optin_confirmed_message": true, "optin_redirect_url": true,
 	"unsubscribe_redirect_url": true,
 }
@@ -225,9 +228,25 @@ func (s *Service) UpdateSettings(ctx context.Context, in map[string]any) error {
 			return userErr("Unknown time zone " + tz + " (use a name such as Asia/Kuala_Lumpur)")
 		}
 	}
+	if u, ok := app["gpc_whatsapp_url"].(string); ok {
+		app["gpc_whatsapp_url"] = strings.TrimRight(u, "/")
+		if u != "" && !isWebURL(u) {
+			return userErr("The GPC WhatsApp address must start with https:// (or http://)")
+		}
+	}
 	for _, k := range []string{"optin_redirect_url", "unsubscribe_redirect_url"} {
 		if u, ok := app[k].(string); ok && u != "" && !isWebURL(u) {
 			return userErr("Redirect addresses must start with https:// or http://")
+		}
+	}
+	if from, ok := app["default_from_email"].(string); ok {
+		from = strings.ToLower(from)
+		app["default_from_email"] = from
+		// Asked of SES only when the address changes, so an autosave of other fields costs nothing.
+		if from != "" && from != strings.ToLower(s.Settings(ctx).DefaultFromEmail) {
+			if err := s.checkSender(ctx, from); err != nil {
+				return err
+			}
 		}
 	}
 	if err := s.mergeDoc(ctx, s.db.Pool, "app", app); err != nil {
