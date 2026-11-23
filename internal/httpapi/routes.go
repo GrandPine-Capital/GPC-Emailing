@@ -342,6 +342,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 		writeJSON(w, 200, map[string]any{"ok": true, "message": "Connected to Amazon SES (" + sv(m["region"]) + "). Sending as " + sv(m["default_from"]) + "; " +
 			strconv.Itoa(svc.RemainingToday(r.Context())) + " emails left today."})
 	})
+	adm("POST "+p+"/settings/test-mail", func(w http.ResponseWriter, r *http.Request) {
+		from, err := svc.SendSettingsTest(r.Context(), user(r).Email)
+		s.reply(w, r, map[string]any{"ok": true, "from": from, "to": user(r).Email}, err)
+	})
 	adm("POST "+p+"/senders/refresh", func(w http.ResponseWriter, r *http.Request) {
 		list, err := svc.RefreshSenders(r.Context())
 		s.reply(w, r, map[string]any{"ok": true, "senders": list}, err)

@@ -8,10 +8,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"html"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/grandpine-capital/gpc-emailing/internal/core"
 	"github.com/grandpine-capital/gpc-emailing/internal/ses"
 )
 
@@ -134,6 +136,44 @@ func (s *Service) senderAllowed(ctx context.Context, addr string) bool {
 		}
 	}
 	return false
+}
+
+// checkSender refuses a default From address SES would not send from: not an address, or not at
+// an identity SES has verified (read live, so a domain verified a minute ago is accepted).
+// Without SES on the server nothing is sent, so any address is kept.
+func (s *Service) checkSender(ctx context.Context, addr string) error {
+	if !core.IsEmail(addr) {
+		return userErr(addr + " is not an e-mail address")
+	}
+	if s.mail == nil {
+		return nil
+	}
+	if _, err := s.RefreshSenders(ctx); err != nil {
+		return userErr("Could not read the SES identities: " + err.Error())
+	}
+	if !s.senderAllowed(ctx, addr) {
+		return userErr(addr + " is not at a verified SES identity in " + s.mail.Region() + " (Settings → Sender identities)")
+	}
+	return nil
+}
+
+// SendSettingsTest sends one short e-mail from the saved default sender to `to` (the admin who
+// asked), dry-run mode or not, so the sender settings can be seen to work. SES's refusal comes
+// back as the message.
+func (s *Service) SendSettingsTest(ctx context.Context, to string) (string, error) {
+	if !core.IsEmail(to) {
+		return "", userErr("Your account has no e-mail address to send the test to")
+	}
+	if s.mail == nil {
+		return "", userErr(ErrNoMailer.Error())
+	}
+	from := s.Account(ctx)
+	text := "This is a test e-mail from the GPC Emailing settings.\n\nSent through Amazon SES in " + s.mail.Region() + " from " + from + "."
+	if _, err := s.Send(ctx, Outgoing{To: to, Force: true, Subject: "GPC Emailing test e-mail", Text: text,
+		HTML: "<p>" + strings.ReplaceAll(html.EscapeString(text), "\n\n", "</p><p>") + "</p>"}); err != nil {
+		return "", userErr("The test e-mail was not sent: " + err.Error())
+	}
+	return from, nil
 }
 
 // ourAddress says whether addr is one of ours (a sender, or a reply-domain address).
