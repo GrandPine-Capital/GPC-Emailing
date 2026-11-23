@@ -302,7 +302,7 @@ func TestPaymentWhatsAppDryRun(t *testing.T) {
 	}
 }
 
-// The Transactional page: WhatsApp per payment event (not for the Helpdesk e-mail), the
+// The Transactional page: WhatsApp per payment and Keycloak event (not for the Helpdesk e-mail), the
 // default wording, the numbers to choose from, and what it refuses.
 func TestTransactionalWhatsAppConfig(t *testing.T) {
 	e := setup(t, true)
@@ -316,7 +316,7 @@ func TestTransactionalWhatsAppConfig(t *testing.T) {
 	for _, ev := range cfg["events"].([]map[string]any) {
 		w, _ := ev["whatsapp"].(map[string]any)
 		switch ev["source"] {
-		case "payment":
+		case "payment", "keycloak":
 			if w == nil || w["enabled"] != false || w["channel"] != "personal" || w["kind"] != "text" || !strings.Contains(fmt.Sprint(w["default_text"]), "{{") {
 				t.Errorf("%s whatsapp = %v", ev["event"], w)
 			}

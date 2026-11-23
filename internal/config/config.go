@@ -41,6 +41,7 @@ type Config struct {
 	BillingFromName     string // BILLING_FROM_NAME, default the Settings sender name
 	PaymentEventSecret  string // PAYMENT_EVENT_SECRET: verifies POST /hooks/payments; unset turns it off
 	HelpdeskEventSecret string // HELPDESK_EVENT_SECRET: verifies POST /hooks/helpdesk; unset turns it off
+	KeycloakEventSecret string // KEYCLOAK_EVENT_SECRET: verifies POST /hooks/keycloak; unset turns it off
 }
 
 func get(key, def string) string {
@@ -72,6 +73,7 @@ func Load() (Config, error) {
 		BillingFromName:       get("BILLING_FROM_NAME", ""),
 		PaymentEventSecret:    get("PAYMENT_EVENT_SECRET", ""),
 		HelpdeskEventSecret:   get("HELPDESK_EVENT_SECRET", ""),
+		KeycloakEventSecret:   get("KEYCLOAK_EVENT_SECRET", ""),
 	}
 	var errs []error
 	interval, err := time.ParseDuration(get("WORKER_INTERVAL", "5m"))
