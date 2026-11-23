@@ -28,6 +28,9 @@ var TxnEvents = []TxnEvent{
 	{"payment.refunded", "payment", "Refund notice", "Sent when Finance refunds an order.", "payment_refunded"},
 	{"subscription.charge_upcoming", "payment", "Plan first-charge notice", "Sent 3 days before a plan's free days end: the date and amount of the first card charge.", "subscription_charge_upcoming"},
 	{"helpdesk.password_reset", "helpdesk", "Helpdesk password reset", "Sent when a Helpdesk customer asks to reset their password.", "helpdesk_password_reset"},
+	{"keycloak.execute_actions", "keycloak", "Account action e-mail (set a new password)", "Sent by Keycloak when a user asks ValueFarm for a new password, or staff send \"Credential reset\" from the admin console. Off: Keycloak sends its own e-mail.", "keycloak_execute_actions"},
+	{"keycloak.password_reset", "keycloak", "Forgot password (login page)", "Sent by Keycloak when a user uses \"Forgot password?\" on the sign-in page. Off: Keycloak sends its own e-mail.", "keycloak_password_reset"},
+	{"keycloak.verify_email", "keycloak", "Verify e-mail address", "Sent by Keycloak when a user has to confirm their e-mail address. Off: Keycloak sends its own e-mail.", "keycloak_verify_email"},
 }
 
 func txnEvent(event string) (TxnEvent, bool) {
@@ -42,7 +45,7 @@ func txnEvent(event string) (TxnEvent, bool) {
 type txnEventSetting struct {
 	Off        bool   `json:"off"`
 	TemplateID string `json:"template_id"`
-	// WhatsApp is the same event's WhatsApp message (payment events only); off unless set.
+	// WhatsApp is the same event's WhatsApp message (the events in whatsAppDefaultText); off unless set.
 	WhatsApp txnWhatsApp `json:"whatsapp"`
 }
 
@@ -115,13 +118,13 @@ func (s *Service) TransactionalConfig(ctx context.Context) (map[string]any, erro
 		"events": events, "from_email": cfg.FromEmail, "from_name": cfg.FromName,
 		"effective_from_email": from, "effective_from_name": name,
 		"default_from_email": s.mailCfg.TransactionalFrom, "no_reply": IsNoReply(from),
-		"payment_hook": s.PaymentEventSecret != "", "whatsapp_connected": connected,
+		"payment_hook": s.PaymentEventSecret != "", "keycloak_hook": s.KeycloakEventSecret != "", "whatsapp_connected": connected,
 	}, nil
 }
 
 // SaveTransactionalConfig saves the page (admin): {from_email, from_name, events: {<event>:
 // {enabled, template_id, whatsapp}}}. An empty template_id is the default template; whatsapp
-// (payment events) is {enabled, channel, kind, text, template, language, params}.
+// (payment and Keycloak events) is {enabled, channel, kind, text, template, language, params}.
 func (s *Service) SaveTransactionalConfig(ctx context.Context, b map[string]any) error {
 	from := strings.ToLower(strings.TrimSpace(str(b["from_email"])))
 	if from != "" {

@@ -46,6 +46,9 @@ type Service struct {
 	// HelpdeskEventSecret verifies GPC-CSTicket's signed requests (HELPDESK_EVENT_SECRET); empty
 	// turns POST /hooks/helpdesk off.
 	HelpdeskEventSecret string
+	// KeycloakEventSecret verifies the Keycloak e-mail hook's signed events (KEYCLOAK_EVENT_SECRET);
+	// empty turns POST /hooks/keycloak off, and Keycloak then sends its own e-mails.
+	KeycloakEventSecret string
 }
 
 // New builds the service. secretKey is SETTINGS_ENCRYPTION_KEY (base64); link keys are signed

@@ -36,6 +36,14 @@ var whatsAppDefaultText = map[string]string{
 		"It may take a few working days to reach your account.\n\nDetails: {{receipt_url}}",
 	"subscription.charge_upcoming": "Hi {{first_name}}, a reminder: the free days of your {{item}} plan end soon. " +
 		"Your card will be charged {{charge_amount}} on {{charge_at}}, and then every year.\n\nReply here if you have any questions.",
+	// Keycloak's account e-mails: a notice only. The link itself is never among a WhatsApp
+	// message's merge values (HandleKeycloakEvent), so it stays in the e-mail.
+	"keycloak.execute_actions": "Hi {{first_name|there}}, we have just e-mailed you a link to set a new {{realm_name|ValueFarm}} password. " +
+		"It works for {{expires_in}}.\n\nIf you did not ask for this, you can ignore it: your password stays the same.",
+	"keycloak.password_reset": "Hi {{first_name|there}}, we have just e-mailed you a link to reset your {{realm_name|ValueFarm}} password. " +
+		"It works for {{expires_in}}.\n\nIf you did not ask for this, you can ignore it: your password stays the same.",
+	"keycloak.verify_email": "Hi {{first_name|there}}, we have just e-mailed you a link to confirm the e-mail address of your {{realm_name|ValueFarm}} account. " +
+		"It works for {{expires_in}}.",
 }
 
 const (
@@ -204,24 +212,33 @@ func whatsAppText(text string, vars map[string]string) string {
 
 // queuePaymentWhatsApp records and tries at once the WhatsApp message a payment event calls for.
 func (s *Service) queuePaymentWhatsApp(ctx context.Context, ev paymentEvent, te TxnEvent, vars map[string]string) (map[string]any, error) {
+	return s.queueTxnWhatsApp(ctx, TxnRequest{
+		Source: "payment", Key: ev.Type + ":" + ev.PaymentID + ":whatsapp", Template: te.DefaultKey,
+		To: ev.Customer.Email, ToName: ev.Customer.Name, Reference: ev.PaymentID, Vars: vars,
+	}, ev.Customer.Phone, true)
+}
+
+// queueTxnWhatsApp records the WhatsApp message of an event for the person at phone (as the
+// asking system has it; a local number takes the default country code). With now it is also
+// tried at once; otherwise the worker sends it.
+func (s *Service) queueTxnWhatsApp(ctx context.Context, r TxnRequest, phone string, now bool) (map[string]any, error) {
 	cc := s.Settings(ctx).DefaultCountryCode
 	if cc == "" {
-		cc = "60" // GrandPine's buyers are in Malaysia: 012-… is +60 12-…
+		cc = "60" // GrandPine's customers are in Malaysia: 012-… is +60 12-…
 	}
-	phone := core.PhoneKey(ev.Customer.Phone, cc)
-	if phone == "" {
-		return map[string]any{"ignored": "no customer phone"}, nil
+	r.Channel, r.ToPhone = "whatsapp", core.PhoneKey(phone, cc)
+	if r.ToPhone == "" {
+		return map[string]any{"ignored": "no phone number"}, nil
 	}
-	id, created, err := s.QueueTransactional(ctx, TxnRequest{
-		Source: "payment", Key: ev.Type + ":" + ev.PaymentID + ":whatsapp", Template: te.DefaultKey, Channel: "whatsapp",
-		To: ev.Customer.Email, ToName: ev.Customer.Name, ToPhone: phone, Reference: ev.PaymentID, Vars: vars,
-	})
+	id, created, err := s.QueueTransactional(ctx, r)
 	if err != nil {
 		return nil, err
 	}
-	status, err := s.SendTransactional(ctx, id)
-	if err != nil {
-		s.log.Warn("payment whatsapp not sent yet", "id", id, "type", ev.Type, "err", err)
+	status := "queued"
+	if now {
+		if status, err = s.SendTransactional(ctx, id); err != nil {
+			s.log.Warn("whatsapp not sent yet", "id", id, "source", r.Source, "err", err)
+		}
 	}
 	return map[string]any{"id": id, "created": created, "status": status}, nil
 }
