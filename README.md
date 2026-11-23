@@ -123,6 +123,39 @@ message; a 400, 401, 403 or 404 fails at once, anything else is retried like e-m
 for SES. The CRM (GPC-Lead) can send its own WhatsApp on payment events: switch that off before ticking
 these, or buyers get two.
 
+### Keycloak's account e-mails
+
+The Keycloak image (ValueFarm.KeycloakTheme, `providers/gpc-email-hook`) hands its account e-mails to
+`POST /hooks/keycloak` instead of sending them itself, signed like the hooks above with
+`KEYCLOAK_EVENT_SECRET` (unset: the hook answers 503).
+
+| Keycloak sends | Event | Template key |
+|---|---|---|
+| "Credential reset" / execute-actions e-mail (ValueFarm's forgot-password) | `keycloak.execute_actions` | `keycloak_execute_actions` |
+| "Forgot password?" on the sign-in page | `keycloak.password_reset` | `keycloak_password_reset` |
+| Verify e-mail address | `keycloak.verify_email` | `keycloak_verify_email` |
+
+```json
+{"type": "keycloak.password_reset", "id": "<one per e-mail>", "occurred_at": "2026-11-23T06:00:00Z",
+ "realm": "valuefarm", "realm_name": "ValueFarm",
+ "user": {"id": "…", "username": "…", "email": "…", "first_name": "…", "last_name": "…", "phone": "…"},
+ "link": "https://…/login-actions/action-token?key=…", "expires_in": "12 hours",
+ "expires_at": "2026-11-23T18:00:00Z", "required_actions": "Update Password"}
+```
+
+The answer carries `"handled"`. It is `true` only when the e-mail **has been sent**; on anything else
+(the event switched off on the Transactional page, dry-run mode, SES refusing, a missing template, any
+error status or a timeout) Keycloak sends its own e-mail from its theme, so someone asking for a new
+password always gets one. A row that was left to Keycloak is closed as `skipped`: the worker does not send
+it later. Merge tags: `action_url` (Keycloak's link, single use), `expires_in`, `expires_at`,
+`first_name`, `full_name`, `username`, `realm_name`, `required_actions`, `company_address`.
+
+Each can also send a **WhatsApp notice** ("we have e-mailed you a link…") to the phone number on the
+Keycloak account, set up like the payment ones (off until ticked). The link is never among a notice's
+merge values, so it cannot be put into a WhatsApp message: a phone number on an account is not verified.
+The notice is queued with the answer and sent by the worker straight after, so Keycloak is not kept
+waiting.
+
 The **Transactional** page in the dashboard sets, for each of these e-mails, whether it is on
 and which template it uses, and the sender (empty = `BILLING_FROM` / `BILLING_FROM_NAME`); it
 lists everything sent, searchable by order number or address, with Resend. Admins change the
@@ -170,7 +203,8 @@ receiving region (SES does not receive mail in ap-southeast-5). Then:
    `SETTINGS_ENCRYPTION_KEY`, `PUBLIC_BASE_URL`, `KEYCLOAK_*`, `SES_REGION`, `MAIL_FROM`,
    `SES_CONFIGURATION_SET`, `SES_EVENTS_QUEUE_URL`, `REPLY_DOMAIN`, `SES_INBOUND_QUEUE_URL`;
    for receipts, `PAYMENT_EVENT_SECRET`, `BILLING_FROM` (e.g. `billing@grandpine.com`) and
-   optionally `BILLING_FROM_NAME`.
+   optionally `BILLING_FROM_NAME`; for Keycloak's account e-mails, `KEYCLOAK_EVENT_SECRET` (the
+   same value as `GPC_EMAIL_HOOK_SECRET` on the Keycloak task).
 
 A release keeps serving while the next one's migration runs: a read that meets a table the
 migration has just changed is retried once (`internal/store`), so adding columns is safe;

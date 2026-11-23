@@ -1,7 +1,7 @@
-/* Transactional e-mails: what other systems (GPC-Payment) ask us to send to one person —
-   receipts, bank-transfer instructions, refund notices. Which ones are on, the template each
-   uses, the sender, each payment message's WhatsApp copy (through GPC WhatsApp), and everything
-   sent, with resend. */
+/* Transactional e-mails: what other systems (GPC-Payment, Helpdesk, Keycloak) ask us to send to
+   one person — receipts, bank-transfer instructions, refund notices, password-reset and
+   verify-address e-mails. Which ones are on, the template each uses, the sender, each message's
+   WhatsApp copy (through GPC WhatsApp), and everything sent, with resend. */
 (() => {
   const { api, esc, toast, fmtDate, icon, cardHead, fieldLabel } = App;
 
@@ -42,13 +42,15 @@
           <div class="field">${fieldLabel('From number')}<select data-w="channel" style="max-width:460px" ${dis}>${opts.join('')}</select></div>
           <div class="field" data-w-text>${fieldLabel('Message', admin ? '<button type="button" class="link-btn" data-w-reset>Default wording</button>' : '')}
             <textarea data-w="text" rows="${Math.min(18, Math.max(5, (w.text || w.default_text).split('\n').length + 1))}" ${dis}>${esc(w.text || w.default_text)}</textarea>
-            <div class="hint">Merge tags as in the email: <code>{{first_name}}</code>, <code>{{amount}}</code>, <code>{{item}}</code> … A line whose tags are all empty is left out.</div></div>
+            <div class="hint">${e.source === 'keycloak'
+              ? 'Merge tags: <code>{{first_name}}</code>, <code>{{expires_in}}</code>, <code>{{realm_name}}</code>, <code>{{username}}</code>. The link itself is never sent on WhatsApp: it stays in the email.'
+              : 'Merge tags as in the email: <code>{{first_name}}</code>, <code>{{amount}}</code>, <code>{{item}}</code> …'} A line whose tags are all empty is left out.</div></div>
           <div data-w-template>
             <div class="row" style="gap:10px">
-              <div class="field">${fieldLabel('Approved template name')}<input type="text" class="mono" data-w="template" value="${esc(w.template)}" placeholder="payment_receipt" ${dis}></div>
+              <div class="field">${fieldLabel('Approved template name')}<input type="text" class="mono" data-w="template" value="${esc(w.template)}" placeholder="${e.source === 'keycloak' ? 'password_reset_notice' : 'payment_receipt'}" ${dis}></div>
               <div class="field" style="max-width:140px">${fieldLabel('Language')}<input type="text" class="mono" data-w="language" value="${esc(w.language)}" ${dis}></div>
             </div>
-            <div class="field" style="margin-bottom:0">${fieldLabel('Body parameters', 'one per line, in order')}<textarea data-w="params" rows="4" class="mono" placeholder="{{first_name}}&#10;{{amount}}" ${dis}>${esc((w.params || []).join('\n'))}</textarea>
+            <div class="field" style="margin-bottom:0">${fieldLabel('Body parameters', 'one per line, in order')}<textarea data-w="params" rows="4" class="mono" placeholder="{{first_name}}&#10;${e.source === 'keycloak' ? '{{expires_in}}' : '{{amount}}'}" ${dis}>${esc((w.params || []).join('\n'))}</textarea>
               <div class="hint">What fills the template's {{1}}, {{2}} … The template must be approved by Meta first (GPC WhatsApp → Templates, category Utility).</div></div>
           </div>
         </div></div>`;
@@ -58,10 +60,11 @@
     root.innerHTML = `
       ${App.pageHead({
         title: 'Transactional emails',
-        subtitle: 'Emails (and WhatsApp messages) other systems send to one person about their order: receipts, bank-transfer instructions, refunds. They go even to people who unsubscribed from marketing, and are not tracked.',
+        subtitle: 'Emails (and WhatsApp messages) other systems send to one person about their order or account: receipts, bank-transfer instructions, refunds, password resets. They go even to people who unsubscribed from marketing, and are not tracked.',
         actions: admin ? `<button class="btn primary lg" id="save">${icon('check', 17)}Save</button>` : `<span class="badge yellow lg">Read-only (${esc(App.me.role)})</span>`,
       })}
       ${cfg.payment_hook ? '' : '<div class="banner warn">Payment events are not connected on this server (PAYMENT_EVENT_SECRET), so nothing here is sent yet.</div>'}
+      ${cfg.keycloak_hook ? '' : '<div class="banner">The Keycloak emails below are not connected on this server (KEYCLOAK_EVENT_SECRET): Keycloak sends its own account emails.</div>'}
       ${hasWhatsApp && !cfg.whatsapp_connected ? '<div class="banner">To send these on WhatsApp too, connect GPC WhatsApp in <a href="#/settings">Settings → Integrations</a>.</div>' : ''}
       <form id="txn" data-nosubmit autocomplete="off">
       <div class="grid cols-2" style="margin-bottom:24px">
@@ -77,7 +80,8 @@
         <section class="card">
           ${cardHead({ icon: 'info', tone: 'gray', title: 'How it works', sub: 'From GPC-Payment to the customer' })}
           <p class="muted" style="margin-top:0">When an order changes in GPC-Payment, it tells Emailing, and the email below goes to the buyer's address straight away. Each email goes once per order; a failed send is retried for a few hours. Edit the wording in <a href="#/templates">Templates</a> — merge tags such as <code>{{item}}</code>, <code>{{amount}}</code>, <code>{{receipt_url}}</code> are listed in each template's starter text.</p>
-          <p class="muted" style="margin-bottom:0">A payment email can also go to the buyer's WhatsApp through GPC WhatsApp, where it shows in the inbox. It is off until you tick it: if the CRM still sends its own payment WhatsApp, switch that off first, or buyers get two.</p>
+          <p class="muted">A payment email can also go to the buyer's WhatsApp through GPC WhatsApp, where it shows in the inbox. It is off until you tick it: if the CRM still sends its own payment WhatsApp, switch that off first, or buyers get two.</p>
+          <p class="muted" style="margin-bottom:0">Keycloak's account emails (new password, verify address) come here too. Switch one off and Keycloak sends its own email again; the same happens by itself whenever this server cannot send. Their WhatsApp message is only a notice that the email was sent, to the phone number on the account.</p>
         </section>
       </div>
       <h2>Emails</h2>
@@ -101,11 +105,11 @@
       </div>
       </form>
       <div class="card">
-        ${cardHead({ icon: 'mail-open', tone: 'gray', title: 'Sent', sub: 'The latest 100; search by order number or email address' })}
+        ${cardHead({ icon: 'mail-open', tone: 'gray', title: 'Sent', sub: 'The latest 100; search by order number, account ID or email address' })}
         <form id="find" class="row" style="gap:8px;margin-bottom:16px;flex-wrap:nowrap" data-nosubmit>
           <input type="search" name="q" value="${esc(q)}" placeholder="Order number or email" style="flex:1;min-width:0;max-width:360px">
           <button class="btn">${icon('search', 15)}Find</button></form>
-        ${sent.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Sent</th><th>To</th><th>Message</th><th class="hide-sm">Order</th><th>Status</th><th></th></tr></thead><tbody>
+        ${sent.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Sent</th><th>To</th><th>Message</th><th class="hide-sm">Order / account</th><th>Status</th><th></th></tr></thead><tbody>
           ${sent.map((r) => {
             const wa = r.channel === 'whatsapp';
             const to = wa ? `+${r.to_phone}` : r.to_email;
