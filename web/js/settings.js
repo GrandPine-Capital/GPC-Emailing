@@ -189,6 +189,13 @@
         </section>
 
         <section class="card">
+          ${cardHead({ icon: 'whatsapp', tone: 'wa', title: 'GPC WhatsApp', sub: 'Payment WhatsApp messages (Transactional page)', aside: (s.gpc_whatsapp_url && s.gpc_whatsapp_key) ? '<span class="badge green lg"><span class="dot"></span>Connected</span>' : '<span class="badge lg">Not set up</span>' })}
+          <div class="field">${fieldLabel('Platform address')}${input('gpc_whatsapp_url', s.gpc_whatsapp_url, { mono: true, placeholder: 'https://whatsapp.grandpine.com' })}</div>
+          <div class="field">${fieldLabel('API key', 'GPC WhatsApp → API keys')}${input('gpc_whatsapp_key', s.gpc_whatsapp_key, { secret: true, placeholder: 'gpc_live_…' })}
+            <div class="hint">Create the key in the company's GPC WhatsApp console with the scopes <b>read</b> and <b>messages:write</b>. Messages sent this way appear in that inbox, and its opt-outs and daily limits apply.</div></div>
+        </section>
+
+        <section class="card">
           ${cardHead({ icon: 'webhook', tone: 'gray', title: 'Inbound webhooks', sub: 'Receive WhatsApp replies and leads from other apps' })}
           <div class="field">${fieldLabel('ChatDaddy webhook URL', `<button type="button" class="link-btn" data-copy-from="cd_hook">${icon('copy', 14)}Copy</button>`)}
             <input type="text" class="mono" id="cd_hook" value="${esc(s.chatdaddy_webhook_url || (admin ? '' : 'Admins only'))}" readonly>

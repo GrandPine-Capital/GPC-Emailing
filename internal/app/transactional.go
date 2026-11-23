@@ -31,6 +31,10 @@ type TxnRequest struct {
 	ToName     string
 	Reference  string // the system's record the e-mail is about (the order id)
 	Vars       map[string]string
+	// Channel is "email" (the default) or "whatsapp"; a WhatsApp message goes to ToPhone
+	// (international digits) and To is then optional.
+	Channel string
+	ToPhone string
 }
 
 // TxnRow is one transactional e-mail.
@@ -55,6 +59,9 @@ type TxnRow struct {
 	DryRun      bool              `db:"dry_run" json:"dry_run"`
 	CreatedAt   time.Time         `db:"created_at" json:"created_at"`
 	SentAt      *time.Time        `db:"sent_at" json:"sent_at"`
+	Channel     string            `db:"channel" json:"channel"`
+	ToPhone     string            `db:"to_phone" json:"to_phone"`
+	Resends     int               `db:"resends" json:"-"`
 }
 
 const (
@@ -68,19 +75,26 @@ const (
 // whether this call created it.
 func (s *Service) QueueTransactional(ctx context.Context, r TxnRequest) (string, bool, error) {
 	r.To = strings.ToLower(strings.TrimSpace(r.To))
+	if r.Channel == "" {
+		r.Channel = "email"
+	}
 	switch {
 	case r.Source == "" || r.Key == "" || r.Template == "":
 		return "", false, userErr("source, key and template are required")
-	case !core.IsEmail(r.To):
+	case r.Channel == "whatsapp" && r.ToPhone == "":
+		return "", false, userErr("a recipient phone number is required")
+	case r.Channel == "whatsapp" && !core.IsEmail(r.To):
+		r.To = ""
+	case r.Channel != "whatsapp" && !core.IsEmail(r.To):
 		return "", false, userErr("a valid recipient e-mail is required")
 	}
 	if r.Vars == nil {
 		r.Vars = map[string]string{}
 	}
 	var id string
-	err := s.db.Pool.QueryRow(ctx, `INSERT INTO transactional (id, source, source_key, template_key, template_id, to_email, to_name, vars, reference, created_at, next_attempt_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10) ON CONFLICT (source, source_key) DO NOTHING RETURNING id`,
-		ids.New(), r.Source, r.Key, r.Template, nilIfEmpty(r.TemplateID), r.To, strings.TrimSpace(r.ToName), r.Vars, r.Reference, s.now()).Scan(&id)
+	err := s.db.Pool.QueryRow(ctx, `INSERT INTO transactional (id, source, source_key, template_key, template_id, to_email, to_name, vars, reference, created_at, next_attempt_at, channel, to_phone)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12) ON CONFLICT (source, source_key) DO NOTHING RETURNING id`,
+		ids.New(), r.Source, r.Key, r.Template, nilIfEmpty(r.TemplateID), r.To, strings.TrimSpace(r.ToName), r.Vars, r.Reference, s.now(), r.Channel, r.ToPhone).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = s.db.Pool.QueryRow(ctx, `SELECT id FROM transactional WHERE source = $1 AND source_key = $2`, r.Source, r.Key).Scan(&id)
 		return id, false, err
@@ -154,6 +168,9 @@ func (s *Service) SendTransactional(ctx context.Context, id string) (string, err
 			r.ID, status, next, core.Truncate(cause.Error(), 500))
 		return status, errors.Join(cause, err)
 	}
+	if r.Channel == "whatsapp" {
+		return s.sendTxnWhatsApp(ctx, r, fail)
+	}
 	if err := s.canSend(ctx); err != nil {
 		// Not a failure of this e-mail: wait for sending to be set up, without using up attempts.
 		_, uerr := s.db.Pool.Exec(ctx, `UPDATE transactional SET attempts = attempts - 1, next_attempt_at = $2, error = $3 WHERE id = $1`,
@@ -173,19 +190,7 @@ func (s *Service) SendTransactional(ctx context.Context, id string) (string, err
 	} else if err != nil {
 		return fail(err, false)
 	}
-	vars := map[string]string{}
-	for k, v := range r.Vars {
-		vars[k] = v
-	}
-	if vars["first_name"] == "" {
-		vars["first_name"] = strings.Fields(r.ToName + " ")[0]
-	}
-	if vars["full_name"] == "" {
-		vars["full_name"] = r.ToName
-	}
-	vars["email"] = r.ToEmail
-	st := s.Settings(ctx)
-	vars["company_address"], vars["sender_name"] = st.CompanyAddress, st.FromName
+	vars := s.txnVars(ctx, r)
 	subject := t.Subject
 	if subject == "" {
 		subject = t.Name
@@ -215,13 +220,31 @@ func (s *Service) SendTransactional(ctx context.Context, id string) (string, err
 	return "sent", err
 }
 
-// processTransactional sends the due queued transactional mail (the worker's retries).
-func (s *Service) processTransactional(ctx context.Context, hasTime func() bool) (int, error) {
-	if err := s.canSend(ctx); err != nil {
-		return 0, err
+// txnVars are the merge values of a transactional message: what the asking system sent, the
+// recipient's names and the company's.
+func (s *Service) txnVars(ctx context.Context, r *TxnRow) map[string]string {
+	vars := map[string]string{}
+	for k, v := range r.Vars {
+		vars[k] = v
 	}
+	if vars["first_name"] == "" {
+		vars["first_name"] = strings.Fields(r.ToName + " ")[0]
+	}
+	if vars["full_name"] == "" {
+		vars["full_name"] = r.ToName
+	}
+	vars["email"] = r.ToEmail
+	st := s.Settings(ctx)
+	vars["company_address"], vars["sender_name"] = st.CompanyAddress, st.FromName
+	return vars
+}
+
+// processTransactional sends the due queued transactional messages (the worker's retries).
+// WhatsApp messages go whether or not SES is set up; e-mail waits for it.
+func (s *Service) processTransactional(ctx context.Context, hasTime func() bool) (int, error) {
+	mailErr := s.canSend(ctx)
 	rows, err := s.db.Pool.Query(ctx, `SELECT id FROM transactional WHERE status = 'queued' AND next_attempt_at <= $1
-		ORDER BY next_attempt_at LIMIT 200`, s.now())
+		AND (channel = 'whatsapp' OR $2) ORDER BY next_attempt_at LIMIT 200`, s.now(), mailErr == nil)
 	if err != nil {
 		return 0, err
 	}
@@ -239,6 +262,9 @@ func (s *Service) processTransactional(ctx context.Context, hasTime func() bool)
 		} else if st == "sent" {
 			n++
 		}
+	}
+	if mailErr != nil && n == 0 {
+		return 0, mailErr
 	}
 	return n, nil
 }
@@ -267,11 +293,11 @@ func (s *Service) Transactionals(ctx context.Context, source, reference, status,
 		ORDER BY created_at DESC LIMIT $5`, source, reference, status, q, limit)
 }
 
-// ResendTransactional queues a transactional e-mail again (a failed one, or a copy the person
-// asked for) and sends it now.
+// ResendTransactional queues a transactional message again (a failed one, or a copy the person
+// asked for) and sends it now. A resent WhatsApp is a new message, under a new key.
 func (s *Service) ResendTransactional(ctx context.Context, id string) (string, error) {
-	if err := store.Affected(s.db.Pool.Exec(ctx, `UPDATE transactional SET status = 'queued', attempts = 0, next_attempt_at = $2, error = NULL
-		WHERE id = $1`, id, s.now())); err != nil {
+	if err := store.Affected(s.db.Pool.Exec(ctx, `UPDATE transactional SET status = 'queued', attempts = 0, next_attempt_at = $2, error = NULL,
+		resends = resends + 1 WHERE id = $1`, id, s.now())); err != nil {
 		return "", err
 	}
 	return s.SendTransactional(ctx, id)

@@ -94,6 +94,53 @@ a failed send is retried by the worker (1, 2, 4 … minutes, 8 tries), and SES b
 complaints mark the row. Staff see them at `GET /api/transactional?source=payment&reference=<order id>`
 and resend with `POST /api/transactional/{id}/resend`.
 
+**WhatsApp.** Each payment e-mail can also go to the buyer's WhatsApp (Transactional page → *Also send
+on WhatsApp*; off for every event until ticked), through GPC-WhatsApp's API (`POST /api/v1/messages`), so
+the message sits in that platform's inbox and its opt-outs and daily limits apply. Settings →
+Integrations → *GPC WhatsApp* holds the platform's address and an API key of the company there (scopes
+`read` and `messages:write`). Each event picks its number: the company's personal number with free text
+(merge tags as in the e-mail; a line whose tags all come out empty is left out), or a WABA number with an
+approved template whose body parameters are merge tags. The message is a `transactional` row with
+`channel = 'whatsapp'` and `to_phone` in international digits (a local `0…` number takes the default
+country code, else 60), made once per event and order. Its sends carry the idempotency key
+`emailing:<row id>#<resends>`, so the worker's retries reach the customer once and a staff resend is a new
+message; a 400, 401, 403 or 404 fails at once, anything else is retried like e-mail, and none of it waits
+for SES. The CRM (GPC-Lead) can send its own WhatsApp on payment events: switch that off before ticking
+these, or buyers get two.
+
+### Keycloak's account e-mails
+
+The Keycloak image (ValueFarm.KeycloakTheme, `providers/gpc-email-hook`) hands its account e-mails to
+`POST /hooks/keycloak` instead of sending them itself, signed like the hooks above with
+`KEYCLOAK_EVENT_SECRET` (unset: the hook answers 503).
+
+| Keycloak sends | Event | Template key |
+|---|---|---|
+| "Credential reset" / execute-actions e-mail (ValueFarm's forgot-password) | `keycloak.execute_actions` | `keycloak_execute_actions` |
+| "Forgot password?" on the sign-in page | `keycloak.password_reset` | `keycloak_password_reset` |
+| Verify e-mail address | `keycloak.verify_email` | `keycloak_verify_email` |
+
+```json
+{"type": "keycloak.password_reset", "id": "<one per e-mail>", "occurred_at": "2026-11-23T06:00:00Z",
+ "realm": "valuefarm", "realm_name": "ValueFarm",
+ "user": {"id": "…", "username": "…", "email": "…", "first_name": "…", "last_name": "…", "phone": "…"},
+ "link": "https://…/login-actions/action-token?key=…", "expires_in": "12 hours",
+ "expires_at": "2026-11-23T18:00:00Z", "required_actions": "Update Password"}
+```
+
+The answer carries `"handled"`. It is `true` only when the e-mail **has been sent**; on anything else
+(the event switched off on the Transactional page, dry-run mode, SES refusing, a missing template, any
+error status or a timeout) Keycloak sends its own e-mail from its theme, so someone asking for a new
+password always gets one. A row that was left to Keycloak is closed as `skipped`: the worker does not send
+it later. Merge tags: `action_url` (Keycloak's link, single use), `expires_in`, `expires_at`,
+`first_name`, `full_name`, `username`, `realm_name`, `required_actions`, `company_address`.
+
+Each can also send a **WhatsApp notice** ("we have e-mailed you a link…") to the phone number on the
+Keycloak account, set up like the payment ones (off until ticked). The link is never among a notice's
+merge values, so it cannot be put into a WhatsApp message: a phone number on an account is not verified.
+The notice is queued with the answer and sent by the worker straight after, so Keycloak is not kept
+waiting.
+
 The **Transactional** page in the dashboard sets, for each of these e-mails, whether it is on
 and which template it uses, and the sender (empty = `BILLING_FROM` / `BILLING_FROM_NAME`); it
 lists everything sent, searchable by order number or address, with Resend. Admins change the
@@ -141,7 +188,8 @@ receiving region (SES does not receive mail in ap-southeast-5). Then:
    `SETTINGS_ENCRYPTION_KEY`, `PUBLIC_BASE_URL`, `KEYCLOAK_*`, `SES_REGION`, `MAIL_FROM`,
    `SES_CONFIGURATION_SET`, `SES_EVENTS_QUEUE_URL`, `REPLY_DOMAIN`, `SES_INBOUND_QUEUE_URL`;
    for receipts, `PAYMENT_EVENT_SECRET`, `BILLING_FROM` (e.g. `billing@grandpine.com`) and
-   optionally `BILLING_FROM_NAME`.
+   optionally `BILLING_FROM_NAME`; for Keycloak's account e-mails, `KEYCLOAK_EVENT_SECRET` (the
+   same value as `GPC_EMAIL_HOOK_SECRET` on the Keycloak task).
 
 `SETTINGS_ENCRYPTION_KEY` and `PUBLIC_BASE_URL` must stay the same once mail has gone out:
 the key signs click-tracking links; the URL is in every tracking and unsubscribe link.
@@ -168,7 +216,7 @@ Campaigns over the daily cap carry on the next day by themselves.
 | `internal/catalog` | Countries, focus industries, trigger and step names; `catalog.json` is generated from `web/shared/catalog.js` by `node scripts/gen-catalog.js` |
 | `internal/httpapi` | API routes, public routes, staff sign-in |
 | `web/` | The dashboard. `js/backend.js` is the API client; templates are rendered to HTML in the browser (`shared/render-blocks.js`) and the server sends the saved HTML |
-| `db/migration` | `V1` schema, `V2` standard templates and (paused) example automations |
+| `db/migration` | `V1` schema, `V2` standard templates and (paused) example automations, `V3`–`V7` transactional mail, `V9` transactional WhatsApp, `V10` Keycloak's account e-mails. `V8` (opt-in, forms and tag audiences) is on staging only: when it is released, run Flyway once with `-outOfOrder=true`, or give it the next free number |
 
 ## Moving from the Firebase build
 

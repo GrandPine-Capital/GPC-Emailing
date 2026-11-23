@@ -83,6 +83,10 @@ func run(log *slog.Logger) error {
 	if cfg.HelpdeskEventSecret == "" {
 		log.Warn("HELPDESK_EVENT_SECRET not set: Helpdesk password-reset mail is off (POST /hooks/helpdesk answers 503)")
 	}
+	svc.KeycloakEventSecret = cfg.KeycloakEventSecret
+	if cfg.KeycloakEventSecret == "" {
+		log.Warn("KEYCLOAK_EVENT_SECRET not set: Keycloak sends its own account e-mails (POST /hooks/keycloak answers 503)")
+	}
 
 	if cfg.WorkerEnabled {
 		go svc.Run(ctx, cfg.WorkerInterval)

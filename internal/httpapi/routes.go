@@ -308,6 +308,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 	adm("PUT "+p+"/transactional/config", withBody(func(w http.ResponseWriter, r *http.Request, b body) {
 		s.reply(w, r, ok, svc.SaveTransactionalConfig(r.Context(), b))
 	}))
+	adm("GET "+p+"/transactional/whatsapp-channels", func(w http.ResponseWriter, r *http.Request) {
+		v, err := svc.WhatsAppChannels(r.Context())
+		s.reply(w, r, v, err)
+	})
 	h("POST "+p+"/transactional/{id}/resend", func(w http.ResponseWriter, r *http.Request) {
 		st, err := svc.ResendTransactional(r.Context(), id(r))
 		s.reply(w, r, map[string]any{"ok": err == nil, "status": st}, err)

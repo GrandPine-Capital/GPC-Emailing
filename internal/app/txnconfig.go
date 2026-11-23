@@ -28,6 +28,9 @@ var TxnEvents = []TxnEvent{
 	{"payment.refunded", "payment", "Refund notice", "Sent when Finance refunds an order.", "payment_refunded"},
 	{"subscription.charge_upcoming", "payment", "Plan first-charge notice", "Sent 3 days before a plan's free days end: the date and amount of the first card charge.", "subscription_charge_upcoming"},
 	{"helpdesk.password_reset", "helpdesk", "Helpdesk password reset", "Sent when a Helpdesk customer asks to reset their password.", "helpdesk_password_reset"},
+	{"keycloak.execute_actions", "keycloak", "Account action e-mail (set a new password)", "Sent by Keycloak when a user asks ValueFarm for a new password, or staff send \"Credential reset\" from the admin console. Off: Keycloak sends its own e-mail.", "keycloak_execute_actions"},
+	{"keycloak.password_reset", "keycloak", "Forgot password (login page)", "Sent by Keycloak when a user uses \"Forgot password?\" on the sign-in page. Off: Keycloak sends its own e-mail.", "keycloak_password_reset"},
+	{"keycloak.verify_email", "keycloak", "Verify e-mail address", "Sent by Keycloak when a user has to confirm their e-mail address. Off: Keycloak sends its own e-mail.", "keycloak_verify_email"},
 }
 
 func txnEvent(event string) (TxnEvent, bool) {
@@ -42,6 +45,8 @@ func txnEvent(event string) (TxnEvent, bool) {
 type txnEventSetting struct {
 	Off        bool   `json:"off"`
 	TemplateID string `json:"template_id"`
+	// WhatsApp is the same event's WhatsApp message (the events in whatsAppDefaultText); off unless set.
+	WhatsApp txnWhatsApp `json:"whatsapp"`
 }
 
 type txnSettings struct {
@@ -56,7 +61,7 @@ func (s *Service) txnSettings(ctx context.Context) txnSettings {
 	if ev, ok := d["events"].(map[string]any); ok {
 		for k, v := range ev {
 			m, _ := v.(map[string]any)
-			out.Events[k] = txnEventSetting{Off: truthy(m["off"]), TemplateID: str(m["template_id"])}
+			out.Events[k] = txnEventSetting{Off: truthy(m["off"]), TemplateID: str(m["template_id"]), WhatsApp: whatsAppSetting(m["whatsapp"])}
 		}
 	}
 	return out
@@ -95,23 +100,31 @@ func (s *Service) TransactionalConfig(ctx context.Context) (map[string]any, erro
 		if _, ok := byID[chosen]; !ok {
 			chosen, custom = keyed[e.DefaultKey], false
 		}
-		events = append(events, map[string]any{
+		ev := map[string]any{
 			"event": e.Event, "source": e.Source, "label": e.Label, "description": e.Description,
 			"enabled": !set.Off, "template_id": chosen, "template_name": byID[chosen].Name,
 			"default_template_id": keyed[e.DefaultKey], "custom_template": custom,
-		})
+		}
+		if def, ok := whatsAppDefaultText[e.Event]; ok {
+			w := set.WhatsApp.withDefaults()
+			ev["whatsapp"] = map[string]any{"enabled": w.On, "channel": w.Channel, "kind": w.Kind, "text": w.Text,
+				"template": w.Template, "language": w.Language, "params": w.Params, "default_text": def}
+		}
+		events = append(events, ev)
 	}
+	_, _, connected := s.waConnection(ctx)
 	from, name := s.TransactionalFrom(ctx)
 	return map[string]any{
 		"events": events, "from_email": cfg.FromEmail, "from_name": cfg.FromName,
 		"effective_from_email": from, "effective_from_name": name,
 		"default_from_email": s.mailCfg.TransactionalFrom, "no_reply": IsNoReply(from),
-		"payment_hook": s.PaymentEventSecret != "",
+		"payment_hook": s.PaymentEventSecret != "", "keycloak_hook": s.KeycloakEventSecret != "", "whatsapp_connected": connected,
 	}, nil
 }
 
 // SaveTransactionalConfig saves the page (admin): {from_email, from_name, events: {<event>:
-// {enabled, template_id}}}. An empty template_id is the default template.
+// {enabled, template_id, whatsapp}}}. An empty template_id is the default template; whatsapp
+// (payment and Keycloak events) is {enabled, channel, kind, text, template, language, params}.
 func (s *Service) SaveTransactionalConfig(ctx context.Context, b map[string]any) error {
 	from := strings.ToLower(strings.TrimSpace(str(b["from_email"])))
 	if from != "" {
@@ -136,6 +149,13 @@ func (s *Service) SaveTransactionalConfig(ctx context.Context, b map[string]any)
 			if key == nil || *key != e.DefaultKey {
 				set["template_id"] = id
 			}
+		}
+		if _, ok := whatsAppDefaultText[e.Event]; ok && m != nil && m["whatsapp"] != nil {
+			w, err := cleanWhatsApp(e, m["whatsapp"])
+			if err != nil {
+				return err
+			}
+			set["whatsapp"] = w
 		}
 		events[e.Event] = set
 	}
