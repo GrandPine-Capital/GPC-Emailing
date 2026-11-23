@@ -125,6 +125,8 @@ func (s *Service) TransactionalConfig(ctx context.Context) (map[string]any, erro
 // SaveTransactionalConfig saves the page (admin): {from_email, from_name, events: {<event>:
 // {enabled, template_id, whatsapp}}}. An empty template_id is the default template; whatsapp
 // (payment and Keycloak events) is {enabled, channel, kind, text, template, language, params}.
+// The sender and the e-mails are edited on different pages: "sender_only" saves the sender and
+// leaves the events as they are, "events_only" the reverse.
 func (s *Service) SaveTransactionalConfig(ctx context.Context, b map[string]any) error {
 	from := strings.ToLower(strings.TrimSpace(str(b["from_email"])))
 	if from != "" {
@@ -134,6 +136,9 @@ func (s *Service) SaveTransactionalConfig(ctx context.Context, b map[string]any)
 		if s.mail != nil && !s.senderAllowed(ctx, from) {
 			return userErr(from + " is not on a verified SES identity (Settings → Sender identities)")
 		}
+	}
+	if truthy(b["sender_only"]) {
+		return s.mergeDoc(ctx, s.db.Pool, "transactional", map[string]any{"from_email": from, "from_name": strings.TrimSpace(str(b["from_name"]))})
 	}
 	events := map[string]any{}
 	in, _ := b["events"].(map[string]any)
@@ -158,6 +163,9 @@ func (s *Service) SaveTransactionalConfig(ctx context.Context, b map[string]any)
 			set["whatsapp"] = w
 		}
 		events[e.Event] = set
+	}
+	if truthy(b["events_only"]) {
+		return s.mergeDoc(ctx, s.db.Pool, "transactional", map[string]any{"events": events})
 	}
 	return s.mergeDoc(ctx, s.db.Pool, "transactional", map[string]any{
 		"from_email": from, "from_name": strings.TrimSpace(str(b["from_name"])), "events": events,

@@ -198,7 +198,11 @@
       <div class="card" style="margin-top:${list.length ? 24 : 0}px">
         ${App.cardHead({ icon: 'sparkles', title: 'Start from a recipe', sub: 'Ready-made automations - pick one, adjust it, activate.' })}
         <div class="recipes">${RECIPES.map((r) => recipeCard(r)).join('')}</div>
-      </div>`;
+      </div>
+      <div id="sys-emails"><div class="empty">Loading system emails…</div></div>`;
+    // The system's own emails and the standard lifecycle flows, as one table (transactional.js).
+    const sys = root.querySelector('#sys-emails');
+    App.systemEmails.mount(sys, { automations: list, templates }).catch((err) => { sys.innerHTML = `<div class="card"><h2>System &amp; lifecycle emails</h2><p class="muted">${esc(err.message)}</p></div>`; });
     root.querySelectorAll('[data-recipe]').forEach((b) => (b.onclick = () => { location.hash = `#/automations/new/${b.dataset.recipe}`; }));
     root.querySelectorAll('[data-toggle]').forEach((b) => (b.onclick = async () => {
       await api.post(`/automations/${b.dataset.toggle}/${b.dataset.status === 'active' ? 'pause' : 'activate'}`);
@@ -239,7 +243,7 @@
     if (param.startsWith('new')) {
       const presetCampaign = (param.match(/campaign=([\w-]+)/) || [])[1];
       const key = presetCampaign ? 'follow_up' : param.split('/')[1];
-      const r = RECIPES.find((x) => x.key === key);
+      const r = RECIPES.find((x) => x.key === key) || App.systemEmails.lifecycleRecipe(key);
       a = r
         ? { id: null, name: r.title, status: 'paused', allow_reentry: false, trigger_type: r.trigger_type, trigger_config: { ...r.trigger_config }, steps: r.steps(findTpl), recent: [], runs: {} }
         : { id: null, name: '', status: 'paused', allow_reentry: false, trigger_type: '', trigger_config: {}, steps: [], recent: [], runs: {} };

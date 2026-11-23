@@ -290,3 +290,40 @@ func TestChargeUpcomingNotice(t *testing.T) {
 		t.Fatalf("turned off: %v, sent %d", out, e.ses.count())
 	}
 }
+
+// The sender (Transactional page) and the e-mails (Automations page) are saved separately:
+// neither save may reset the other.
+func TestTransactionalConfigSavesSenderAndEventsApart(t *testing.T) {
+	e := setup(t, true)
+	if _, err := e.svc.RefreshSenders(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.SaveTransactionalConfig(e.ctx, map[string]any{"events_only": true,
+		"events": map[string]any{"payment.refunded": map[string]any{"enabled": false}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.SaveTransactionalConfig(e.ctx, map[string]any{"sender_only": true, "from_email": "billing@grandpine.test", "from_name": "Billing"}); err != nil {
+		t.Fatal(err)
+	}
+	off := func() (refundOn bool, from string) {
+		cfg, err := e.svc.TransactionalConfig(e.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, ev := range cfg["events"].([]map[string]any) {
+			if ev["event"] == "payment.refunded" {
+				refundOn = ev["enabled"].(bool)
+			}
+		}
+		return refundOn, cfg["from_email"].(string)
+	}
+	if on, from := off(); on || from != "billing@grandpine.test" {
+		t.Fatalf("after saving the sender: refund on %v, from %q", on, from)
+	}
+	if err := e.svc.SaveTransactionalConfig(e.ctx, map[string]any{"events_only": true, "events": map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	if on, from := off(); !on || from != "billing@grandpine.test" {
+		t.Fatalf("after saving the e-mails: refund on %v, from %q", on, from)
+	}
+}

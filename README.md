@@ -156,8 +156,11 @@ merge values, so it cannot be put into a WhatsApp message: a phone number on an 
 The notice is queued with the answer and sent by the worker straight after, so Keycloak is not kept
 waiting.
 
-The **Transactional** page in the dashboard sets, for each of these e-mails, whether it is on
-and which template it uses, and the sender (empty = `BILLING_FROM` / `BILLING_FROM_NAME`); it
+**Automations → System & lifecycle emails** lists every one of these e-mails in a table and
+sets whether it is on, which template it uses and its WhatsApp copy; the same table shows the
+Keycloak templates nothing sends yet and the standard lifecycle flows (sign-up, onboarding,
+install, trial, billing, opt-out) still to be created as automations. The **Transactional**
+page sets the sender (empty = `BILLING_FROM` / `BILLING_FROM_NAME`); it
 lists everything sent, searchable by order number or address, with Resend. Admins change the
 settings; editors may resend. The templates are ordinary HTML templates (category
 *transactional*): edit the wording there. A template with a key cannot be deleted. Merge tags: `first_name`,
