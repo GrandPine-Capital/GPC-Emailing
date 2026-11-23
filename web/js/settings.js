@@ -54,6 +54,23 @@
     const lastSeen = Object.fromEntries((s.inbox || []).map((x) => [x.email, x.last_received_at]));
     const account = meta.account || st.account || '';
 
+    // Default From: a name box and a picker of the SES identities. A domain identity is "@domain"
+    // (any name before it); an address identity is the whole address. Empty = the server default.
+    const saved = String(s.default_from_email || '').toLowerCase();
+    const serverDefault = saved ? '' : String(mail.default_from || '');
+    const serverLocal = serverDefault.split('@')[0];
+    const optionOf = (x) => (x.type === 'domain' ? `@${x.email}` : x.email);
+    const shown = saved || serverDefault;
+    const exact = senders.find((x) => x.type !== 'domain' && x.email === shown);
+    const byDomain = senders.find((x) => x.type === 'domain' && x.email === shown.split('@')[1]);
+    const picked = exact ? optionOf(exact) : byDomain ? optionOf(byDomain) : shown ? `@${shown.split('@')[1]}` : '';
+    const fromLocal = saved && !exact ? saved.split('@')[0] : '';
+    const fromOptions = [
+      picked ? '' : '<option value="" selected>Choose an identity</option>',
+      picked && !exact && !byDomain ? `<option value="${esc(picked)}" selected>${esc(picked)} (not listed)</option>` : '',
+      ...senders.map((x) => `<option value="${esc(optionOf(x))}" ${optionOf(x) === picked ? 'selected' : ''} ${x.verified || optionOf(x) === picked ? '' : 'disabled'}>${esc(optionOf(x))}${x.verified ? '' : ' (pending)'}</option>`),
+    ].join('');
+
     root.innerHTML = `
       ${App.pageHead({
         title: 'Settings',
@@ -144,10 +161,16 @@
               ${x.verified ? '<span class="badge green">Verified</span>' : '<span class="badge yellow">Pending verification</span>'}
             </div>`).join('') : `<p class="muted">No identities loaded yet. Click <b>Refresh from SES</b>.</p>`}</div>
           <div class="field" style="margin-top:18px">${fieldLabel('Default "From" address')}
-            ${input('default_from_email', s.default_from_email, { type: 'email', placeholder: `${mail.default_from || 'hello@yourcompany.com'} (server default)` })}
-            <div class="hint">Campaigns and automation emails can also pick their own address. ${App.sendersHint(s)}${s.senders_updated_at ? ` · last refreshed ${fmtDate(s.senders_updated_at)}` : ''}</div></div>
+            <input type="hidden" name="default_from_email" value="${esc(s.default_from_email || '')}">
+            <div class="row" style="align-items:center;gap:8px">
+              <input type="text" id="from-local" value="${esc(fromLocal)}" placeholder="${esc(serverLocal || 'hello')}" autocomplete="off" spellcheck="false" style="flex:1;min-width:0" aria-label="Name before the @">
+              <select id="from-identity" style="flex:1;min-width:0" aria-label="Verified SES identity">${fromOptions}</select>
+            </div>
+            <div class="hint" id="from-hint"></div>
+            <div class="hint">Campaigns and automation emails can also pick their own address. An identity SES has not verified yet is shown as pending.${s.senders_updated_at ? ` Last refreshed ${fmtDate(s.senders_updated_at)}.` : ''}</div></div>
           <div class="row"><button type="button" class="btn primary" id="connect-email">${icon('plus', 16)}Add a sending domain</button>
-            <button type="button" class="btn" id="refresh-senders">${icon('refresh', 16)}Refresh from SES</button></div>
+            <button type="button" class="btn" id="refresh-senders">${icon('refresh', 16)}Refresh from SES</button>
+            ${admin ? `<button type="button" class="btn" id="test-mail" ${mail.configured ? '' : 'disabled title="Amazon SES is not set up on the server"'}>${icon('send', 16)}Send a test email to me</button>` : ''}</div>
         </section>
 
         <section class="card">
@@ -242,6 +265,41 @@
       root.querySelector('#save').onclick = () => save();
       root.querySelector('#save-bottom').onclick = () => save();
     }
+
+    // default From: the name box and the identity picker make the one saved address
+    const fromLocalEl = root.querySelector('#from-local');
+    const fromIdEl = root.querySelector('#from-identity');
+    const fromHidden = form.querySelector('[name=default_from_email]');
+    const fromHint = root.querySelector('#from-hint');
+    const syncFrom = (changed) => {
+      const id = fromIdEl.value;
+      const whole = id && !id.startsWith('@'); // an address identity sends as itself only
+      fromLocalEl.disabled = !admin || whole;
+      if (whole) fromLocalEl.value = id.split('@')[0];
+      const local = fromLocalEl.value.trim().toLowerCase();
+      const next = whole ? id : local && id ? local + id : '';
+      fromHint.innerHTML = next ? `Mail is sent from <code>${esc(next)}</code>.`
+        : `Empty: mail is sent from the server default${serverDefault ? ` <code>${esc(serverDefault)}</code>` : ''}. Type the name before the @ to choose another address.`;
+      if (changed && admin && next !== fromHidden.value) {
+        fromHidden.value = next;
+        setState(`${icon('edit', 15)}Unsaved changes`);
+        autosave();
+      }
+    };
+    fromLocalEl.addEventListener('input', () => syncFrom(true));
+    fromIdEl.addEventListener('change', () => syncFrom(true));
+    if (!admin) fromIdEl.disabled = true;
+    syncFrom(false);
+
+    root.querySelector('#test-mail')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        await save({ quiet: true });
+        const r = await api.post('/settings/test-mail');
+        toast(`Test email sent from ${r.from} to ${r.to}. Check your inbox (and spam folder).`);
+      } catch { /* the API layer says why */ } finally { btn.disabled = false; }
+    });
 
     root.querySelector('#check').onclick = async () => {
       if (admin) await save({ quiet: true });
