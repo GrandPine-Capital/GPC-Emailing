@@ -214,6 +214,9 @@ func (s *Service) HandleWebhook(ctx context.Context, params map[string]string, r
 		}
 	}
 	if params["src"] == "chatdaddy" || str(body["event"]) == "message-insert" {
+		if !s.ChatDaddyOn(ctx) {
+			return map[string]any{"ok": true, "ignored": "ChatDaddy is switched off"}, nil
+		}
 		var items []any
 		switch d := body["data"].(type) {
 		case []any:

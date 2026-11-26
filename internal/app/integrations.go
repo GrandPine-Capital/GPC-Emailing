@@ -53,15 +53,27 @@ type WhatsAppError struct {
 func (e *WhatsAppError) Error() string { return e.Err.Error() }
 func (e *WhatsAppError) Unwrap() error { return e.Err }
 
-// whatsAppProvider is the provider a send uses: the step's own choice, else the setting, else GPC-WhatsApp.
+// errChatDaddyOff is what is returned where ChatDaddy would be called while it is switched off.
+var errChatDaddyOff = errors.New("ChatDaddy is switched off (Settings → Integrations)")
+
+// whatsAppProvider is the provider a send uses: the step's own choice, else the setting, else
+// GPC-WhatsApp. ChatDaddy switched off means GPC-WhatsApp.
 func (s *Service) whatsAppProvider(ctx context.Context, chosen string) string {
 	if chosen == "" {
 		chosen = s.Settings(ctx).WhatsAppProvider
 	}
-	if chosen == "" {
+	if chosen == "" || (chosen == ProviderChatDaddy && !s.ChatDaddyOn(ctx)) {
 		return ProviderGPC
 	}
 	return chosen
+}
+
+// chatDaddyChosen: the step's own choice, else the setting, is ChatDaddy (whether or not it is on).
+func (s *Service) chatDaddyChosen(ctx context.Context, chosen string) bool {
+	if chosen == "" {
+		chosen = s.Settings(ctx).WhatsAppProvider
+	}
+	return chosen == ProviderChatDaddy
 }
 
 func (s *Service) contactPhone(ctx context.Context, c *Contact) string {
@@ -178,6 +190,9 @@ func (s *Service) SendWhatsApp(ctx context.Context, phone string, o WhatsAppOpts
 		}
 		return "", s.callJSON(ctx, http.MethodPost, GraphAPI+"/"+url.PathEscape(st.WhatsAppPhoneNumberID)+"/messages", sec["whatsapp_token"], body, "WhatsApp")
 	}
+	if !s.ChatDaddyOn(ctx) {
+		return "", errChatDaddyOff
+	}
 	if sec["chatdaddy_token"] == "" {
 		return "", errors.New("ChatDaddy API token is not set (Settings → Integrations)")
 	}
@@ -190,6 +205,9 @@ func (s *Service) SendWhatsApp(ctx context.Context, phone string, o WhatsAppOpts
 
 // chatdaddyUpsert creates or updates the contact in ChatDaddy (by phone) with tags.
 func (s *Service) chatdaddyUpsert(ctx context.Context, c *Contact, tags []string) error {
+	if !s.ChatDaddyOn(ctx) {
+		return errChatDaddyOff
+	}
 	token := s.Secrets(ctx)["chatdaddy_token"]
 	if token == "" {
 		return errors.New("ChatDaddy API token is not set (Settings → Integrations)")

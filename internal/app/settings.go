@@ -36,6 +36,9 @@ type Settings struct {
 	// company's default number, "personal" = its free personal number (text only), or a channel id.
 	GPCWhatsAppChannel string `json:"gpc_whatsapp_channel"`
 	Timezone           string `json:"timezone"`
+	// ChatDaddyEnabled is the "Use ChatDaddy" switch; nil = never saved. Read it through
+	// ChatDaddyOn, which derives the default.
+	ChatDaddyEnabled *bool `json:"chatdaddy_enabled"`
 }
 
 func defaultSettings() Settings {
@@ -66,6 +69,18 @@ func (s *Service) Settings(ctx context.Context) Settings {
 		s.log.Warn("settings", "err", err)
 	}
 	return st
+}
+
+// ChatDaddyOn tells whether this service may talk to ChatDaddy at all (Settings → Integrations →
+// "Use ChatDaddy"). A saved choice wins. Never saved: on only for an installation that uses
+// ChatDaddy today (a token is stored and the saved provider is chatdaddy), so deploying this does
+// not break it; every other installation starts with it off.
+func (s *Service) ChatDaddyOn(ctx context.Context) bool {
+	st := s.Settings(ctx)
+	if st.ChatDaddyEnabled != nil {
+		return *st.ChatDaddyEnabled
+	}
+	return st.WhatsAppProvider == ProviderChatDaddy && s.Secrets(ctx)["chatdaddy_token"] != ""
 }
 
 // doc reads a plain settings document (status, senders, inbox).
@@ -164,6 +179,7 @@ func (s *Service) SettingsView(ctx context.Context, admin bool) (map[string]any,
 	out["inbox"] = orEmpty(inbox["addresses"])
 	out["senders"] = orEmpty(senders["list"])
 	out["senders_updated_at"] = senders["updated_at"]
+	out["chatdaddy_enabled"] = s.ChatDaddyOn(ctx) // the effective value: the form posts it back on every save
 	out["can_edit"] = admin
 	out["site_url"] = s.baseURL
 	out["mail"] = s.MailStatus(ctx)
@@ -207,7 +223,7 @@ func (s *Service) UpdateSettings(ctx context.Context, in map[string]any) error {
 		case k == "daily_limit" || k == "per_run_limit":
 			n, _ := strconv.Atoi(strings.TrimSpace(str(v)))
 			app[k] = max(0, n)
-		case k == "dry_run":
+		case k == "dry_run" || k == "chatdaddy_enabled":
 			app[k] = v == true || v == "true"
 		case textSettings[k]:
 			app[k] = strings.TrimSpace(str(v))
