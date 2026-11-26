@@ -152,7 +152,7 @@ func (s *Service) checkSender(ctx context.Context, addr string) error {
 		return userErr("Could not read the SES identities: " + err.Error())
 	}
 	if !s.senderAllowed(ctx, addr) {
-		return userErr(addr + " is not at a verified SES identity in " + s.mail.Region() + " (Settings → Sender identities)")
+		return userErr(addr + " is not at a verified SES identity in " + s.mail.Region() + " (Settings → Sending → Sender identities)")
 	}
 	return nil
 }
@@ -240,7 +240,7 @@ func (s *Service) Send(ctx context.Context, m Outgoing) (SendResult, error) {
 		return SendResult{}, ErrNoMailer
 	}
 	if !s.senderAllowed(ctx, m.FromEmail) {
-		return SendResult{}, fmt.Errorf("%s is not a verified SES sender (Settings → Sender identities)", m.FromEmail)
+		return SendResult{}, fmt.Errorf("%s is not a verified SES sender (Settings → Sending → Sender identities)", m.FromEmail)
 	}
 	if m.FromName == "" {
 		m.FromName = st.FromName

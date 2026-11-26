@@ -212,7 +212,7 @@ const App = (() => {
   /** Which From addresses SES allows: any address at a verified domain, or a verified address. */
   function sendersHint(settings) {
     const ok = (settings.senders || []).filter((x) => x.verified);
-    if (!ok.length) return 'Verified SES senders: none loaded yet (Settings → Sender identities).';
+    if (!ok.length) return 'Verified SES senders: none loaded yet (Settings → Sending → Sender identities).';
     return `Allowed: ${ok.map((x) => (x.type === 'domain' ? `any address @${esc(x.email)}` : esc(x.email))).join(', ')}.`;
   }
 

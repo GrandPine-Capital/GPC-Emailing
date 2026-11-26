@@ -160,7 +160,7 @@ func (s *Service) HandlePaymentEvent(ctx context.Context, sig string, body []byt
 	out := map[string]any{"ok": true}
 	switch {
 	case set.Off:
-		out["ignored"] = te.Label + " is turned off (Transactional page)"
+		out["ignored"] = te.Label + " is turned off (Settings → Transactional e-mails)"
 	case !core.IsEmail(ev.Customer.Email):
 		out["ignored"] = "no customer e-mail"
 	default:

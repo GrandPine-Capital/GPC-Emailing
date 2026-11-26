@@ -260,7 +260,7 @@ func (s *Service) sendTxnWhatsApp(ctx context.Context, r *TxnRow, fail func(erro
 	var preview string
 	if w.Kind == "template" {
 		if w.Template == "" {
-			return fail(errors.New("no WhatsApp template is chosen for this message (Transactional page)"), true)
+			return fail(errors.New("no WhatsApp template is chosen for this message (Settings → Transactional e-mails)"), true)
 		}
 		t := map[string]any{"name": w.Template, "language": w.Language}
 		if len(w.Params) > 0 {
@@ -283,7 +283,7 @@ func (s *Service) sendTxnWhatsApp(ctx context.Context, r *TxnRow, fail func(erro
 		body["text"] = whatsAppText(text, vars)
 		preview = core.Truncate(strings.ReplaceAll(str(body["text"]), "\n", " "), 120)
 		if preview == "" {
-			return fail(errors.New("the WhatsApp message is empty (Transactional page)"), true)
+			return fail(errors.New("the WhatsApp message is empty (Settings → Transactional e-mails)"), true)
 		}
 	}
 	if s.Settings(ctx).DryRun {

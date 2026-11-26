@@ -25,7 +25,7 @@ type TxnRequest struct {
 	Source   string // the asking system, e.g. "payment"
 	Key      string // idempotency key within Source, e.g. "payment.succeeded:<order id>"
 	Template string // templates.key, e.g. "payment_receipt": the default
-	// TemplateID, when set, is the template staff chose instead (Transactional page).
+	// TemplateID, when set, is the template staff chose instead (Settings → Transactional e-mails).
 	TemplateID string
 	To         string
 	ToName     string

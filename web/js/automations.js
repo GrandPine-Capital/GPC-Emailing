@@ -234,11 +234,11 @@
         case 'reply_received': return `<div class="row">${campaign}${field('Only if the reply mentions <span class="hint-inline">(optional)</span>', `<input type="text" data-cfg="keywords" value="${esc(c.keywords || '')}" placeholder="interested, price, call">`, 'Comma separated - any one matches.')}</div>`;
         case 'email_received': return field('Only if the email mentions <span class="hint-inline">(optional)</span>', `<input type="text" data-cfg="keywords" value="${esc(c.keywords || '')}" placeholder="brochure, price">`,
           'Fires for every new email from a known contact (including replies). To answer unknown senders automatically, use <a href="#/autoreply">Auto-reply</a>.');
-        case 'whatsapp_received': return field('Only if the message mentions <span class="hint-inline">(optional)</span>', `<input type="text" data-cfg="keywords" value="${esc(c.keywords || '')}" placeholder="price, info">`, 'Needs the ChatDaddy webhook from Settings → Inbound webhooks.');
+        case 'whatsapp_received': return field('Only if the message mentions <span class="hint-inline">(optional)</span>', `<input type="text" data-cfg="keywords" value="${esc(c.keywords || '')}" placeholder="price, info">`, 'Needs the ChatDaddy webhook from Settings → Integrations → Inbound webhooks.');
         case 'contact_added': return field('List', `<select data-cfg="list_id">${opts(lists, c.list_id, 'Any list')}</select>`);
         case 'tag_added': return field('Tag', `<input type="text" data-cfg="tag" list="tag-list" value="${esc(c.tag || '')}" placeholder="hot-lead">`);
         case 'webhook_received': return field('Event name <span class="hint-inline">(optional)</span>', `<input type="text" data-cfg="event" value="${esc(c.event || '')}" placeholder="form_submitted">`,
-          `Matches the <code>event</code> field your app sends. Webhook URL: <a href="#/settings">Settings → Inbound webhooks</a>.`);
+          `Matches the <code>event</code> field your app sends. Webhook URL: <a href="#/settings/integrations">Settings → Integrations → Inbound webhooks</a>.`);
         case 'manual': return '<p class="muted" style="margin:0">Save the automation, then use <b>Enrol contacts</b> to start it for a list.</p>';
         default: return '<p class="muted" style="margin:0">No extra settings.</p>';
       }
@@ -268,7 +268,7 @@
               <div class="hint">Sent to the contact's phone number (local numbers use the default country code from Settings).</div></div>`;
         }
         case 'chatdaddy_contact':
-          return (settings.chatdaddy_enabled ? '' : '<p class="muted" style="margin:0 0 12px">ChatDaddy is switched off (Settings → Integrations): this step is skipped.</p>') + field('Tags to add in ChatDaddy', inp('tags', s.tags, 'placeholder="email-lead, {{company}}"'), 'Comma separated; merge tags allowed.') +
+          return (settings.chatdaddy_enabled ? '' : '<p class="muted" style="margin:0 0 12px">ChatDaddy is switched off (<a href="#/settings/integrations">Settings → Integrations</a>): this step is skipped.</p>') + field('Tags to add in ChatDaddy', inp('tags', s.tags, 'placeholder="email-lead, {{company}}"'), 'Comma separated; merge tags allowed.') +
             `<label class="check"><input type="checkbox" data-k="include_contact_tags" ${s.include_contact_tags ? 'checked' : ''}> Also copy the contact's tags from this portal</label>`;
         case 'wait':
           return `<div class="row"><div class="field" style="max-width:140px">${App.fieldLabel('Wait')}<input type="number" min="0" data-k="amount" value="${esc(s.amount ?? 1)}"></div>

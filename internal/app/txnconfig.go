@@ -136,7 +136,7 @@ func (s *Service) SaveTransactionalConfig(ctx context.Context, b map[string]any)
 			return userErr("Enter a valid sender e-mail address, or leave it empty for the default")
 		}
 		if s.mail != nil && !s.senderAllowed(ctx, from) {
-			return userErr(from + " is not on a verified SES identity (Settings → Sender identities)")
+			return userErr(from + " is not on a verified SES identity (Settings → Sending → Sender identities)")
 		}
 	}
 	events := map[string]any{}

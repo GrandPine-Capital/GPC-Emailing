@@ -69,7 +69,7 @@ replies there instead, and they are not tracked. Forwarded copies carry
 `X-GPC-Emailing-Forwarded`, so a mailbox rule that sends them back cannot loop.
 
 Mail never fails for lack of SES: without it, queued mail waits and automation sends retry
-hourly. **Dry-run mode** (Settings) records and tracks sends without delivering.
+hourly. **Dry-run mode** (Settings → Sending) records and tracks sends without delivering.
 
 ## Transactional mail (receipts)
 
@@ -94,7 +94,7 @@ a failed send is retried by the worker (1, 2, 4 … minutes, 8 tries), and SES b
 complaints mark the row. Staff see them at `GET /api/transactional?source=payment&reference=<order id>`
 and resend with `POST /api/transactional/{id}/resend`.
 
-**WhatsApp.** Each payment e-mail can also go to the buyer's WhatsApp (Transactional page → *Also send
+**WhatsApp.** Each payment e-mail can also go to the buyer's WhatsApp (Settings → Transactional e-mails → *Also send
 on WhatsApp*; off for every event until ticked), through GPC-WhatsApp's API (`POST /api/v1/messages`), so
 the message sits in that platform's inbox and its opt-outs and daily limits apply. Settings →
 Integrations → *GPC WhatsApp* holds the platform's address and an API key of the company there (scopes
@@ -134,7 +134,7 @@ not retry and switches a webhook off after 20 failures in a row.
   steps stop.
 - `message.status` finds the send by the platform's message id: `transactional.provider_id` (payment and
   Keycloak notices) or `whatsapp.id = 'wa-<id>'` (automations). `failed` marks the transactional row
-  `failed` with the error shown on the Transactional page; it is not resent by itself (use Resend).
+  `failed` with the error shown in Settings → Transactional e-mails; it is not resent by itself (use Resend).
   `delivered`, `read` and an automation send's failure are acknowledged and not stored (there is no column
   for them). An unknown id answers `{"ok":true,"ignored":"unknown message"}`.
 
@@ -202,7 +202,7 @@ changes nothing else. Every signed call (ping, contacts, events) is noted as the
 | `crm.registration_failed` | `crm_registration_failed` |
 | `crm.owner_alert` (staff only; `vars.subject` and `vars.body` are the whole message, shown as escaped plain text) | `crm_owner_alert` |
 
-Each has its own on/off switch, template and sender on the Transactional page (all on by default) and is
+Each has its own on/off switch, template and sender in Settings → Transactional e-mails (all on by default) and is
 sent whatever the person's marketing status, without tracking or an unsubscribe footer. `key` makes it
 once-only (source `crm`): the same key again answers `created: false`. Answer `{"ok": true, "id", "created",
 "status"}`, or `{"ok": true, "ignored": "…"}` for an unknown type, a switched-off event or no e-mail address.
@@ -229,7 +229,7 @@ The Keycloak image (ValueFarm.KeycloakTheme, `providers/gpc-email-hook`) hands i
 ```
 
 The answer carries `"handled"`. It is `true` only when the e-mail **has been sent**; on anything else
-(the event switched off on the Transactional page, dry-run mode, SES refusing, a missing template, any
+(the event switched off in Settings → Transactional e-mails, dry-run mode, SES refusing, a missing template, any
 error status or a timeout) Keycloak sends its own e-mail from its theme, so someone asking for a new
 password always gets one. A row that was left to Keycloak is closed as `skipped`: the worker does not send
 it later. Merge tags: `action_url` (Keycloak's link, single use), `expires_in`, `expires_at`,
@@ -241,7 +241,7 @@ merge values, so it cannot be put into a WhatsApp message: a phone number on an 
 The notice is queued with the answer and sent by the worker straight after, so Keycloak is not kept
 waiting.
 
-The **Transactional** page in the dashboard sets, for each of these e-mails, whether it is on
+The **Transactional e-mails** tab of Settings in the dashboard (the old Transactional page; `#/transactional` redirects to it) sets, for each of these e-mails, whether it is on
 and which template it uses, and the sender (empty = `BILLING_FROM` / `BILLING_FROM_NAME`); it
 lists everything sent, searchable by order number or address, with Resend. Admins change the
 settings; editors may resend. The templates are ordinary HTML templates (category
