@@ -52,6 +52,13 @@
       trigger_type: 'link_clicked', trigger_config: {},
       steps: () => [{ type: 'add_tag', tag: 'clicked' }, { type: 'chatdaddy_contact', tags: 'email-clicked' },
         { type: 'send_whatsapp', provider: 'chatdaddy', text: 'Hi {{first_name|there}}! Thanks for checking out our email. Any questions I can help with?' }],
+      // Offered instead while the "Use ChatDaddy" switch is off (see shared/recipes.js).
+      gpc: {
+        title: 'Clicked → WhatsApp follow-up',
+        desc: 'When someone clicks a link, tag them and start a WhatsApp conversation.',
+        steps: () => [{ type: 'add_tag', tag: 'clicked' },
+          { type: 'send_whatsapp', text: 'Hi {{first_name|there}}! Thanks for checking out our email. Any questions I can help with?' }],
+      },
     },
     {
       key: 'whatsapp_inbound', title: 'WhatsApp message → lead', icon: 'message',
@@ -79,6 +86,8 @@
       steps: () => [{ type: 'add_tag', tag: 'unsubscribed' }, { type: 'chatdaddy_contact', tags: 'email-unsubscribed' }],
     },
   ];
+
+  const recipesFor = (settings) => window.EmailRecipes.visibleRecipes(RECIPES, !!(settings && settings.chatdaddy_enabled));
 
   function recipeCard(r, t = () => '') {
     const steps = r.steps(t);
@@ -131,7 +140,7 @@
 
   // ------------------------------------------------------------------ list page
   App.route(/^#\/automations$/, async (root) => {
-    const [meta, list, templates, lists, campaigns] = await Promise.all([App.getMeta(), api.get('/automations'), api.get('/templates'), api.get('/lists'), api.get('/campaigns')]);
+    const [meta, list, templates, lists, campaigns, settings] = await Promise.all([App.getMeta(), api.get('/automations'), api.get('/templates'), api.get('/lists'), api.get('/campaigns'), api.get('/settings')]);
     const ctx = context(templates, lists, campaigns);
     root.innerHTML = `
       ${App.pageHead({
@@ -155,7 +164,7 @@
       }).join('')}</div>` : ''}
       <div class="card" style="margin-top:${list.length ? 24 : 0}px">
         ${App.cardHead({ icon: 'sparkles', title: 'Start from a recipe', sub: 'Ready-made automations - pick one, adjust it, activate.' })}
-        <div class="recipes">${RECIPES.map((r) => recipeCard(r)).join('')}</div>
+        <div class="recipes">${recipesFor(settings).map((r) => recipeCard(r)).join('')}</div>
       </div>`;
     root.querySelectorAll('[data-recipe]').forEach((b) => (b.onclick = () => { location.hash = `#/automations/new/${b.dataset.recipe}`; }));
     root.querySelectorAll('[data-toggle]').forEach((b) => (b.onclick = async () => {
@@ -169,12 +178,13 @@
 
   // ------------------------------------------------------------------ recipe gallery
   App.route(/^#\/automations\/new$/, async (root) => {
+    const settings = await api.get('/settings');
     root.innerHTML = `
       ${App.pageHead({ title: 'New automation', back: { href: '#/automations', label: 'Automations' }, subtitle: 'Start from a recipe or build your own in a few clicks.' })}
       <div class="recipes">
         <button class="recipe" data-recipe="blank"><div class="r-head"><div class="icon-tile gray">${icon('plus', 20)}</div><div class="r-title">Start from scratch</div></div>
           <div class="r-desc">Choose a trigger and add your own steps.</div></button>
-        ${RECIPES.map((r) => recipeCard(r)).join('')}
+        ${recipesFor(settings).map((r) => recipeCard(r)).join('')}
       </div>`;
     root.querySelectorAll('[data-recipe]').forEach((b) => (b.onclick = () => { location.hash = `#/automations/new/${b.dataset.recipe}`; }));
   });
@@ -197,7 +207,7 @@
     if (param.startsWith('new')) {
       const presetCampaign = (param.match(/campaign=([\w-]+)/) || [])[1];
       const key = presetCampaign ? 'follow_up' : param.split('/')[1];
-      const r = RECIPES.find((x) => x.key === key);
+      const r = recipesFor(settings).find((x) => x.key === key);
       a = r
         ? { id: null, name: r.title, status: 'paused', allow_reentry: false, trigger_type: r.trigger_type, trigger_config: { ...r.trigger_config }, steps: r.steps(findTpl), recent: [], runs: {} }
         : { id: null, name: '', status: 'paused', allow_reentry: false, trigger_type: '', trigger_config: {}, steps: [], recent: [], runs: {} };
