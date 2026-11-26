@@ -18,8 +18,9 @@ import (
 	"github.com/grandpine-capital/gpc-emailing/internal/ids"
 )
 
-// WhatsApp through ChatDaddy (https://api.chatdaddy.tech/im) or the WhatsApp Cloud API (Meta),
-// as Integrations.js.
+// WhatsApp for automations goes through GPC-WhatsApp (the company's own platform, the default),
+// or, kept one release as a fallback, ChatDaddy (https://api.chatdaddy.tech/im) or the WhatsApp
+// Cloud API (Meta), as Integrations.js.
 var (
 	ChatDaddyAPI = "https://api.chatdaddy.tech/im"
 	GraphAPI     = "https://graph.facebook.com/v21.0"
@@ -29,6 +30,38 @@ var (
 type WhatsAppOpts struct {
 	Provider, Text, Template, Language string
 	Params                             []string
+	// Ref and IdempotencyKey are for GPC-WhatsApp: the caller's own reference (the automation run
+	// id) and a key that is the same for every retry of the same send, so it goes out once.
+	Ref, IdempotencyKey string
+}
+
+// WhatsApp providers (setting whatsapp_provider). Unset or empty means ProviderGPC.
+const (
+	ProviderGPC       = "gpc_whatsapp"
+	ProviderChatDaddy = "chatdaddy"
+	ProviderCloud     = "cloud"
+)
+
+// WhatsAppError is a failed GPC-WhatsApp send. Temporary ones (daily limit, platform down) are
+// worth trying again later; the others (opted out, 24 h window closed, channel disconnected,
+// a wrong request) would fail the same way again.
+type WhatsAppError struct {
+	Err       error
+	Temporary bool
+}
+
+func (e *WhatsAppError) Error() string { return e.Err.Error() }
+func (e *WhatsAppError) Unwrap() error { return e.Err }
+
+// whatsAppProvider is the provider a send uses: the step's own choice, else the setting, else GPC-WhatsApp.
+func (s *Service) whatsAppProvider(ctx context.Context, chosen string) string {
+	if chosen == "" {
+		chosen = s.Settings(ctx).WhatsAppProvider
+	}
+	if chosen == "" {
+		return ProviderGPC
+	}
+	return chosen
 }
 
 func (s *Service) contactPhone(ctx context.Context, c *Contact) string {
@@ -58,21 +91,72 @@ func (s *Service) callJSON(ctx context.Context, method, url, token string, body 
 	return nil
 }
 
-// SendWhatsApp sends with the chosen provider (or the workspace default).
-func (s *Service) SendWhatsApp(ctx context.Context, phone string, o WhatsAppOpts) error {
+// sendGPCWhatsApp sends through GPC-WhatsApp (POST /api/v1/messages) with the connection payment
+// notices use, and returns the platform's message id.
+func (s *Service) sendGPCWhatsApp(ctx context.Context, st Settings, to string, o WhatsAppOpts) (string, error) {
+	channel := strings.TrimSpace(st.GPCWhatsAppChannel)
+	if o.Template != "" && channel == "personal" {
+		return "", errors.New("Templates go from a WABA number: choose a WABA channel in Settings → Integrations (or send a text)")
+	}
+	body := map[string]any{"to": to}
+	if channel != "" {
+		body["channelId"] = channel // empty: the platform uses the company's default number
+	}
+	if o.Ref != "" {
+		body["ref"] = core.Truncate(o.Ref, 200)
+	}
+	if o.IdempotencyKey != "" {
+		body["idempotencyKey"] = o.IdempotencyKey
+	}
+	if o.Template != "" {
+		lang := o.Language
+		if lang == "" {
+			lang = st.WhatsAppTemplateLanguage
+		}
+		tpl := map[string]any{"name": o.Template, "language": lang}
+		if len(o.Params) > 0 {
+			params := []any{}
+			for _, p := range o.Params {
+				params = append(params, map[string]any{"type": "text", "text": p})
+			}
+			tpl["components"] = []any{map[string]any{"type": "body", "parameters": params}}
+		}
+		body["type"], body["template"] = "template", tpl
+	} else {
+		body["type"], body["text"] = "text", o.Text
+	}
+	code, out, err := s.waCall(ctx, http.MethodPost, "/api/v1/messages", body)
+	switch {
+	case err == nil:
+		if str(out["status"]) == "failed" {
+			return "", &WhatsAppError{Err: fmt.Errorf("GPC WhatsApp: %s", str(out["error"]))}
+		}
+		return str(out["messageId"]), nil
+	case errors.Is(err, errWhatsAppOff):
+		return "", err
+	case code == http.StatusTooManyRequests || code >= 500 || code == 0:
+		return "", &WhatsAppError{Err: err, Temporary: true} // daily limit, platform down or unreachable
+	default:
+		return "", &WhatsAppError{Err: err} // 409 (opted out, 24 h window, channel off) and a wrong request
+	}
+}
+
+// SendWhatsApp sends with the chosen provider (or the workspace default). It returns the message
+// id when the provider gives one (GPC-WhatsApp).
+func (s *Service) SendWhatsApp(ctx context.Context, phone string, o WhatsAppOpts) (string, error) {
 	st := s.Settings(ctx)
 	to := core.PhoneKey(phone, st.DefaultCountryCode)
 	if to == "" {
-		return errors.New("contact has no valid phone number")
+		return "", errors.New("contact has no valid phone number")
 	}
-	provider := o.Provider
-	if provider == "" {
-		provider = st.WhatsAppProvider
+	provider := s.whatsAppProvider(ctx, o.Provider)
+	if provider == ProviderGPC {
+		return s.sendGPCWhatsApp(ctx, st, to, o)
 	}
 	sec := s.Secrets(ctx)
-	if provider == "cloud" {
+	if provider == ProviderCloud {
 		if sec["whatsapp_token"] == "" || st.WhatsAppPhoneNumberID == "" {
-			return errors.New("WhatsApp Cloud API is not configured (Settings → Integrations)")
+			return "", errors.New("WhatsApp Cloud API is not configured (Settings → Integrations)")
 		}
 		body := map[string]any{"messaging_product": "whatsapp", "to": to}
 		if o.Template != "" {
@@ -92,16 +176,16 @@ func (s *Service) SendWhatsApp(ctx context.Context, phone string, o WhatsAppOpts
 		} else {
 			body["type"], body["text"] = "text", map[string]any{"body": o.Text, "preview_url": true}
 		}
-		return s.callJSON(ctx, http.MethodPost, GraphAPI+"/"+url.PathEscape(st.WhatsAppPhoneNumberID)+"/messages", sec["whatsapp_token"], body, "WhatsApp")
+		return "", s.callJSON(ctx, http.MethodPost, GraphAPI+"/"+url.PathEscape(st.WhatsAppPhoneNumberID)+"/messages", sec["whatsapp_token"], body, "WhatsApp")
 	}
 	if sec["chatdaddy_token"] == "" {
-		return errors.New("ChatDaddy API token is not set (Settings → Integrations)")
+		return "", errors.New("ChatDaddy API token is not set (Settings → Integrations)")
 	}
 	account := st.ChatDaddyAccountID
 	if account == "" {
 		account = "random"
 	}
-	return s.callJSON(ctx, http.MethodPost, ChatDaddyAPI+"/messages/"+url.PathEscape(account)+"/"+url.PathEscape(to), sec["chatdaddy_token"], map[string]string{"text": o.Text}, "ChatDaddy")
+	return "", s.callJSON(ctx, http.MethodPost, ChatDaddyAPI+"/messages/"+url.PathEscape(account)+"/"+url.PathEscape(to), sec["chatdaddy_token"], map[string]string{"text": o.Text}, "ChatDaddy")
 }
 
 // chatdaddyUpsert creates or updates the contact in ChatDaddy (by phone) with tags.
@@ -134,10 +218,15 @@ func (s *Service) chatdaddyUpsert(ctx context.Context, c *Contact, tags []string
 	return s.callJSON(ctx, http.MethodPost, ChatDaddyAPI+"/contacts/upsert", token, map[string]any{"contacts": []any{cd}}, "ChatDaddy")
 }
 
-// logWhatsApp keeps a WhatsApp message on the contact's timeline.
-func (s *Service) logWhatsApp(ctx context.Context, c *Contact, direction, text, automationID string) {
-	_, err := s.db.Pool.Exec(ctx, `INSERT INTO whatsapp (id, contact_id, phone, direction, text, automation_id, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		ids.New(), c.ID, core.PhoneKey(s.contactPhone(ctx, c), s.Settings(ctx).DefaultCountryCode), direction, core.Truncate(text, 4000), nilIfEmpty(automationID), s.now())
+// logWhatsApp keeps a WhatsApp message on the contact's timeline. With the platform's message id
+// the row is wa-<id>, as incoming ones are, and is kept once however often it is logged.
+func (s *Service) logWhatsApp(ctx context.Context, c *Contact, direction, text, automationID string, messageID ...string) {
+	id := ids.New()
+	if len(messageID) > 0 && messageID[0] != "" {
+		id = "wa-" + messageID[0]
+	}
+	_, err := s.db.Pool.Exec(ctx, `INSERT INTO whatsapp (id, contact_id, phone, direction, text, automation_id, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (id) DO NOTHING`,
+		id, c.ID, core.PhoneKey(s.contactPhone(ctx, c), s.Settings(ctx).DefaultCountryCode), direction, core.Truncate(text, 4000), nilIfEmpty(automationID), s.now())
 	if err != nil {
 		s.log.Warn("whatsapp log", "err", err)
 	}
