@@ -343,6 +343,27 @@ func (s *Server) public(mux *http.ServeMux) {
 		}
 	})
 
+	// The CRM's signed connection test.
+	mux.HandleFunc("POST /hooks/crm/ping", func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
+		if err != nil {
+			writeError(w, http.StatusRequestEntityTooLarge, "body too large")
+			return
+		}
+		out, err := svc.HandleCRMPing(r.Context(), r.Header.Get("sig"), raw)
+		switch {
+		case errors.Is(err, app.ErrCRMHookOff):
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+		case errors.Is(err, app.ErrBadSignature):
+			writeError(w, http.StatusUnauthorized, err.Error())
+		case err != nil:
+			s.log.ErrorContext(r.Context(), "crm ping", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+		default:
+			writeJSON(w, http.StatusOK, out)
+		}
+	})
+
 	// The CRM's signed requests for a transactional e-mail.
 	mux.HandleFunc("POST /hooks/crm/events", func(w http.ResponseWriter, r *http.Request) {
 		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))

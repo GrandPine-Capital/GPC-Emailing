@@ -6,6 +6,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
@@ -20,9 +21,13 @@ import (
 //
 //	POST /hooks/crm/contacts  quiet one-way bulk sync of people, their category and tags
 //	POST /hooks/crm/events    a transactional e-mail the CRM asks for
+//	POST /hooks/crm/ping      a connection test: changes nothing, answers {"ok":true}
+//
+// Every call that passes the signature check is noted (time and kind) in the "crm_hook" settings
+// document, so Settings → Integrations can show when the CRM last got through.
 
 // ErrCRMHookOff: crm_hook_secret is not set, so the CRM routes accept nothing.
-var ErrCRMHookOff = errors.New("CRM hooks are not set up (Settings → Integrations → CRM hook secret)")
+var ErrCRMHookOff = errors.New("CRM hooks are not set up (Settings → Integrations → CRM (GPC-Lead) → Signing secret)")
 
 const (
 	crmMaxContacts  = 500
@@ -30,8 +35,15 @@ const (
 	crmMaxVarLength = 5000
 )
 
-// crmVerify checks the signature against the stored secret.
-func (s *Service) crmVerify(ctx context.Context, sig string, body []byte) error {
+// The kinds of CRM call, as stored and shown.
+const (
+	CRMCallContacts = "contacts"
+	CRMCallEvent    = "event"
+	CRMCallPing     = "ping"
+)
+
+// crmVerify checks the signature against the stored secret and, when it passes, notes the call.
+func (s *Service) crmVerify(ctx context.Context, sig string, body []byte, kind string) error {
 	secret := s.Secrets(ctx)["crm_hook_secret"]
 	if secret == "" {
 		return ErrCRMHookOff
@@ -39,7 +51,21 @@ func (s *Service) crmVerify(ctx context.Context, sig string, body []byte) error 
 	if !VerifySignature(secret, body, sig) {
 		return ErrBadSignature
 	}
+	// A failed note never fails the request.
+	if err := s.mergeDoc(ctx, s.db.Pool, "crm_hook", map[string]any{
+		"last_call_at": time.Now().UTC().Format(time.RFC3339), "last_call_kind": kind,
+	}); err != nil {
+		s.log.WarnContext(ctx, "crm hook: last call not noted", "err", err)
+	}
 	return nil
+}
+
+// HandleCRMPing is the CRM's connection test: it proves the address and the signing secret match.
+func (s *Service) HandleCRMPing(ctx context.Context, sig string, body []byte) (map[string]any, error) {
+	if err := s.crmVerify(ctx, sig, body, CRMCallPing); err != nil {
+		return nil, err
+	}
+	return map[string]any{"ok": true, "service": "gpc-emailing"}, nil
 }
 
 type crmContact struct {
@@ -60,7 +86,7 @@ type crmInvalid struct {
 // HandleCRMContacts applies the CRM's contact sync. It is quiet: it starts no automation (no
 // contact_added or tag_added), sends nothing and calls no messaging service.
 func (s *Service) HandleCRMContacts(ctx context.Context, sig string, body []byte) (map[string]any, error) {
-	if err := s.crmVerify(ctx, sig, body); err != nil {
+	if err := s.crmVerify(ctx, sig, body, CRMCallContacts); err != nil {
 		return nil, err
 	}
 	var in struct {
@@ -208,7 +234,7 @@ var crmEventVars = []string{"product", "amount", "currency", "reference", "subje
 // HandleCRMEvent queues (and tries at once to send) the transactional e-mail the CRM asks for.
 // The key makes it once-only: the same key again answers created:false.
 func (s *Service) HandleCRMEvent(ctx context.Context, sig string, body []byte) (map[string]any, error) {
-	if err := s.crmVerify(ctx, sig, body); err != nil {
+	if err := s.crmVerify(ctx, sig, body, CRMCallEvent); err != nil {
 		return nil, err
 	}
 	var ev struct {

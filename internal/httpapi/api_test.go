@@ -301,6 +301,91 @@ func TestCRMHookRoutes(t *testing.T) {
 	}
 }
 
+// TestCRMPingAndLastCall: the ping route answers 503 / 401 / 200, every good CRM call notes its kind,
+// a bad signature notes nothing, and only an admin sees the address and the last call (never the
+// secret to anyone else).
+func TestCRMPingAndLastCall(t *testing.T) {
+	srv, svc, _ := server(t)
+	post := func(path, body, secret string) (int, map[string]any) {
+		t.Helper()
+		req, _ := http.NewRequest("POST", srv.URL+path, strings.NewReader(body))
+		m := hmac.New(sha256.New, []byte(secret))
+		m.Write([]byte(body))
+		req.Header.Set("sig", hex.EncodeToString(m.Sum(nil)))
+		res, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(res.Body).Decode(&out)
+		return res.StatusCode, out
+	}
+	last := func(who string) (any, any, map[string]any) {
+		_, s := call(t, srv, "GET", "/api/settings", who, "")
+		return s["crm_hook_base_url"], s["crm_last_call"], s
+	}
+	ping := `{"ping":true}`
+	if code, _ := post("/hooks/crm/ping", ping, "s3cret"); code != http.StatusServiceUnavailable {
+		t.Fatalf("ping, no secret: %d", code)
+	}
+	if err := svc.UpdateSettings(context.Background(), map[string]any{"crm_hook_secret": "s3cret"}); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := post("/hooks/crm/ping", ping, "wrong"); code != http.StatusUnauthorized {
+		t.Fatalf("ping, bad signature: %d", code)
+	}
+	if _, lc, _ := last(admin); lc != nil {
+		t.Fatalf("a failed call was noted: %v", lc)
+	}
+	if code, out := post("/hooks/crm/ping", ping, "s3cret"); code != http.StatusOK || out["ok"] != true || out["service"] != "gpc-emailing" {
+		t.Fatalf("ping: %d %v", code, out)
+	}
+	kind := func() string {
+		_, lc, _ := last(admin)
+		m, _ := lc.(map[string]any)
+		if m == nil || m["at"] == "" || m["at"] == nil {
+			t.Fatalf("no last call: %v", lc)
+		}
+		k, _ := m["kind"].(string)
+		return k
+	}
+	if k := kind(); k != "ping" {
+		t.Fatalf("kind after ping = %q", k)
+	}
+	contacts := `{"tagPrefix":"crm:","contacts":[{"email":"a@b.my","tags":["crm:vip"]}]}`
+	if code, _ := post("/hooks/crm/contacts", contacts, "s3cret"); code != http.StatusOK {
+		t.Fatalf("contacts: %d", code)
+	}
+	if k := kind(); k != "contacts" {
+		t.Fatalf("kind after contacts = %q", k)
+	}
+	ev := `{"type":"crm.payment_failed","key":"k9","to":{"name":"Tan","email":"a@b.my"},"vars":{"product":"VF Pro"}}`
+	if code, _ := post("/hooks/crm/events", ev, "s3cret"); code != http.StatusOK {
+		t.Fatalf("event: %d", code)
+	}
+	if k := kind(); k != "event" {
+		t.Fatalf("kind after event = %q", k)
+	}
+	if code, _ := post("/hooks/crm/ping", ping, "wrong"); code != http.StatusUnauthorized || kind() != "event" {
+		t.Fatalf("a failed ping changed the last call")
+	}
+	base, _, view := last(admin)
+	if base == "" || base == nil || base != view["site_url"] {
+		t.Fatalf("crm_hook_base_url = %v, site_url = %v", base, view["site_url"])
+	}
+	if view["crm_hook_connected"] != true {
+		t.Fatalf("crm_hook_connected = %v", view["crm_hook_connected"])
+	}
+	// Someone who is not an admin gets neither the address, the last call nor the secret.
+	for _, who := range []string{editor, viewer} {
+		base, lc, v := last(who)
+		if base != "" || lc != nil || v["crm_hook_secret"] != "" {
+			t.Fatalf("non-admin %s sees base %v last %v secret %q", who, base, lc, v["crm_hook_secret"])
+		}
+	}
+}
+
 // TestWhatsAppHookRoute: GPC-WhatsApp's webhook answers 503 without the secret, 401 for a bad or
 // unprefixed signature, 400 for a body that is not JSON or over 256 KB, and 200 for a signed
 // delivery, including an event it ignores.
