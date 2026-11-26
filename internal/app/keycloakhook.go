@@ -86,7 +86,7 @@ func (s *Service) HandleKeycloakEvent(ctx context.Context, sig string, body []by
 	set := s.txnSettings(ctx).Events[ev.Type]
 	var out map[string]any
 	if set.Off {
-		out = left(te.Label + " is turned off (Transactional page)")
+		out = left(te.Label + " is turned off (Settings → Transactional e-mails)")
 	} else {
 		id, created, err := s.QueueTransactional(ctx, TxnRequest{
 			Source: "keycloak", Key: ev.Type + ":" + ev.ID, Template: te.DefaultKey, TemplateID: set.TemplateID,

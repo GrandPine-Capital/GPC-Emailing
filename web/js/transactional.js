@@ -1,4 +1,4 @@
-/* Transactional e-mails: what other systems (GPC-Payment, Helpdesk, Keycloak) ask us to send to
+/* The Settings tab "Transactional e-mails" (the page used to be #/transactional): what other systems (GPC-Payment, Helpdesk, Keycloak) ask us to send to
    one person — receipts, bank-transfer instructions, refund notices, password-reset and
    verify-address e-mails. Which ones are on, the template each uses, the sender, each message's
    WhatsApp copy (through GPC WhatsApp), and everything sent, with resend. */
@@ -11,7 +11,8 @@
     return `<span class="badge ${color}" title="${esc(r.error || '')}">${esc(s)}</span>`;
   };
 
-  App.route(/^#\/transactional(?:\?(.*))?$/, async (root, qs) => {
+  /** Draws the tab into `root` (a panel of the Settings page); `qs` is the query string (q=…) of the address. */
+  async function render(root, qs) {
     const params = new URLSearchParams(qs || '');
     const q = params.get('q') || '';
     const admin = App.isAdmin();
@@ -58,22 +59,21 @@
     const hasWhatsApp = cfg.events.some((e) => e.whatsapp);
 
     root.innerHTML = `
-      ${App.pageHead({
-        title: 'Transactional emails',
-        subtitle: 'Emails (and WhatsApp messages) other systems send to one person about their order or account: receipts, bank-transfer instructions, refunds, password resets. They go even to people who unsubscribed from marketing, and are not tracked.',
-        actions: admin ? `<button class="btn primary lg" id="save">${icon('check', 17)}Save</button>` : `<span class="badge yellow lg">Read-only (${esc(App.me.role)})</span>`,
-      })}
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px">
+        <p class="muted" style="margin:0;flex:1">Emails (and WhatsApp messages) other systems send to one person about their order or account: receipts, bank-transfer instructions, refunds, password resets. They go even to people who unsubscribed from marketing, and are not tracked.</p>
+        ${admin ? `<button class="btn primary lg" id="txn-save" style="flex-shrink:0">${icon('check', 17)}Save</button>` : `<span class="badge yellow lg">Read-only (${esc(App.me.role)})</span>`}
+      </div>
       ${cfg.payment_hook ? '' : '<div class="banner warn">Payment events are not connected on this server (PAYMENT_EVENT_SECRET), so nothing here is sent yet.</div>'}
       ${cfg.keycloak_hook ? '' : '<div class="banner">The Keycloak emails below are not connected on this server (KEYCLOAK_EVENT_SECRET): Keycloak sends its own account emails.</div>'}
-      ${cfg.crm_hook ? '' : '<div class="banner">The CRM emails below are not connected: set the signing secret in <a href="#/settings">Settings → Integrations → CRM (GPC-Lead)</a>.</div>'}
-      ${hasWhatsApp && !cfg.whatsapp_connected ? '<div class="banner">To send these on WhatsApp too, connect GPC WhatsApp in <a href="#/settings">Settings → Integrations</a>.</div>' : ''}
+      ${cfg.crm_hook ? '' : '<div class="banner">The CRM emails below are not connected: set the signing secret in <a href="#/settings/integrations">Settings → Integrations → CRM (GPC-Lead)</a>.</div>'}
+      ${hasWhatsApp && !cfg.whatsapp_connected ? '<div class="banner">To send these on WhatsApp too, connect GPC WhatsApp in <a href="#/settings/integrations">Settings → Integrations</a>.</div>' : ''}
       <form id="txn" data-nosubmit autocomplete="off">
       <div class="grid cols-2" style="margin-bottom:24px">
         <section class="card">
           ${cardHead({ icon: 'mail', title: 'Sender', sub: 'Who these emails come from' })}
           <div class="field">${fieldLabel('From address', '<span class="aside chip-hint">empty = server default</span>')}
             <input type="email" name="from_email" value="${esc(cfg.from_email)}" placeholder="${esc(cfg.default_from_email || cfg.effective_from_email)}" ${dis}>
-            <div class="hint">Any address on a verified SES identity (Settings → Sender identities). Now sending as <b>${esc(cfg.effective_from_email)}</b>.
+            <div class="hint">Any address on a verified SES identity (<a href="#/settings/sending">Settings → Sending → Sender identities</a>). Now sending as <b>${esc(cfg.effective_from_email)}</b>.
               ${cfg.no_reply ? 'A no-reply address carries no reply address, so customers cannot reply.' : 'Replies come back through the reply domain and are forwarded to this mailbox.'}</div></div>
           <div class="field" style="margin-bottom:0">${fieldLabel('From name', '<span class="aside chip-hint">empty = server default</span>')}
             <input type="text" name="from_name" value="${esc(cfg.from_name)}" placeholder="${esc(cfg.effective_from_name || 'GrandPine Capital')}" ${dis}></div>
@@ -145,7 +145,7 @@
     root.querySelector('#find').onsubmit = (ev) => {
       ev.preventDefault();
       const v = new FormData(ev.target).get('q').trim();
-      location.hash = v ? `#/transactional?q=${encodeURIComponent(v)}` : '#/transactional';
+      location.hash = window.SettingsTabs.hashFor('transactional', v ? `q=${encodeURIComponent(v)}` : '');
     };
     root.querySelectorAll('[data-resend]').forEach((b) => (b.onclick = async () => {
       b.disabled = true;
@@ -155,7 +155,7 @@
         App.navigate();
       } catch { b.disabled = false; }
     }));
-    const save = root.querySelector('#save');
+    const save = root.querySelector('#txn-save');
     if (save) save.onclick = async () => {
       const form = root.querySelector('#txn');
       const events = {};
@@ -186,5 +186,12 @@
         App.navigate();
       } catch { save.disabled = false; }
     };
+  }
+
+  window.TransactionalPanel = { render };
+
+  // The page's old address now leads to its tab in Settings (the search, if any, goes with it).
+  App.route(/^#\/transactional(?:\?.*)?$/, async () => {
+    location.replace(window.SettingsTabs.legacyRedirect(location.hash));
   });
 })();

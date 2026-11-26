@@ -1,4 +1,7 @@
-/* Settings: sender, limits, Amazon SES and the worker, lead sources, sender identities, access, integrations. */
+/* Settings, in tabs (the tab is in the address: #/settings/<tab>; see web/shared/settings-tabs.js):
+   General (sender, access), Sending (limits, Amazon SES and the worker, sender identities),
+   Integrations (lead sources, WhatsApp, the CRM, inbound webhooks) and Transactional e-mails
+   (the page in transactional.js, drawn into its tab). */
 (() => {
   const { api, esc, toast, confirmDialog, fmtDate, icon, cardHead, fieldLabel } = App;
 
@@ -51,7 +54,9 @@
       <div class="foot"><button class="btn primary" data-close>Done</button></div>`, { wide: true });
   }
 
-  App.route(/^#\/settings(?:\?(.*))?$/, async (root, qs) => {
+  App.route(/^#\/settings(?:\/[^?]*)?(?:\?(.*))?$/, async (root, qs) => {
+    const { TABS, tabFromHash, hashFor } = window.SettingsTabs;
+    let tab = tabFromHash(location.hash);
     const [s, meta] = await Promise.all([api.get('/settings'), App.getMeta(true)]);
     const mail = s.mail || {};
     const sesAcct = mail.account || {};
@@ -90,15 +95,15 @@
       ${App.pageHead({
         title: 'Settings',
         badge: `<span class="badge outline lg">${s.dry_run ? 'Dry run' : 'Production'}</span>`,
-        subtitle: 'Manage the sending mailbox, deliverability, sender identities and integrations.',
-        actions: admin
-          ? `<span class="save-state" id="save-state">${icon('check-circle', 17)}Auto-saved</span><button class="btn primary lg" id="save">Save settings</button>`
-          : `<span class="badge yellow lg">Read-only (${esc(App.me.role)})</span>`,
+        subtitle: 'Manage the sending mailbox, deliverability, sender identities, integrations and transactional e-mails.',
+        actions: `<span data-settings-only ${tab === 'transactional' ? 'hidden' : ''}>${admin
+          ? `<span class="save-state" id="save-state">${icon('check-circle', 17)}Auto-saved</span> <button class="btn primary lg" id="save">Save settings</button>`
+          : `<span class="badge yellow lg">Read-only (${esc(App.me.role)})</span>`}</span>`,
       })}
-      ${admin ? '' : '<div class="banner info">Only admins can change settings. Ask an admin if something needs updating.</div>'}
+      <div class="tabs" role="tablist" aria-label="Settings">${TABS.map((t) => `<button type="button" role="tab" class="tab" id="tab-${t.id}" data-tab="${t.id}" aria-controls="panel-${t.id}" aria-selected="${t.id === tab}" tabindex="${t.id === tab ? 0 : -1}">${esc(t.label)}</button>`).join('')}</div>
+      ${admin ? '' : `<div class="banner info" data-settings-only ${tab === 'transactional' ? 'hidden' : ''}>Only admins can change settings. Ask an admin if something needs updating.</div>`}
       <form id="settings" autocomplete="off" data-nosubmit>
-      <div class="grid cols-2">
-
+      <div class="grid cols-2 tab-panel" role="tabpanel" id="panel-general" aria-labelledby="tab-general" data-panel="general" ${tab === 'general' ? '' : 'hidden'}>
         <section class="card">
           ${cardHead({ icon: 'mail', title: 'Sender', sub: 'Configure outbound email identity and headers' })}
           <div class="field">${fieldLabel('Default sender')}
@@ -110,6 +115,18 @@
             <textarea name="company_address" rows="2" placeholder="548 Market St, Suite 12345, San Francisco, CA 94104">${esc(s.company_address || '')}</textarea></div>
         </section>
 
+        <section class="card">
+          ${cardHead({ icon: 'shield', tone: 'violet', title: 'Access', sub: 'Who can sign in to Emailing' })}
+          <p class="muted" style="margin-top:0">Staff sign in with their GrandPine account. Access is granted in the IAM Workspace, on the Emailing app:</p>
+          <ul class="muted">
+            <li><b>Admin</b> also manages these settings and the integration keys.</li>
+            <li><b>Editor</b> works with campaigns, contacts, templates and automations.</li>
+            <li><b>Viewer</b> can look but not change anything.</li>
+          </ul>
+          <div class="hint">You are signed in as <b>${esc(App.me.email)}</b> (${esc(App.me.role === 'member' ? 'editor' : App.me.role)}).</div>
+        </section>
+      </div>
+      <div class="grid cols-2 tab-panel" role="tabpanel" id="panel-sending" aria-labelledby="tab-sending" data-panel="sending" ${tab === 'sending' ? '' : 'hidden'}>
         <section class="card">
           ${cardHead({ icon: 'chart', tone: 'violet', title: 'Sending limits', sub: 'Deliverability safety caps and scheduling throttle', aside: `<span class="badge green lg">${remaining} emails left today</span>` })}
           <div class="field">${fieldLabel('Max emails per day', `<span class="aside chip-hint">SES allows ${sesAcct.max_24h ? Math.round(sesAcct.max_24h).toLocaleString() : '…'} / 24h</span>`)}
@@ -140,16 +157,6 @@
         </section>
 
         <section class="card">
-          ${cardHead({ icon: 'key', tone: 'orange', title: 'Lead finder sources', sub: 'API keys for automated email finding & enrichment', aside: `<span class="badge outline lg">${providers} Provider${providers === 1 ? '' : 's'}</span>` })}
-          <p class="muted" style="margin-top:0">Without keys, the Lead Finder uses DuckDuckGo search and crawls public company websites. Google Programmable Search gives 100 free queries/day.</p>
-          <div class="field">${fieldLabel('Hunter.io API key', '<a href="https://hunter.io/api-keys" target="_blank" rel="noopener">hunter.io → API</a>')}${input('hunter_api_key', s.hunter_api_key, { secret: true, placeholder: 'Enter Hunter secret token' })}</div>
-          <div class="field">${fieldLabel('Apollo.io API key', '<a href="https://app.apollo.io/#/settings/integrations/api" target="_blank" rel="noopener">apollo.io → Settings → API</a>')}${input('apollo_api_key', s.apollo_api_key, { secret: true, placeholder: 'Enter Apollo API key…' })}</div>
-          <div class="field">${fieldLabel('Google Programmable Search API key', 'Cloud Console')}${input('google_cse_key', s.google_cse_key, { secret: true, placeholder: 'AIzaSy…' })}</div>
-          <div class="field">${fieldLabel('Google Search engine ID (cx)')}${input('google_cse_cx', s.google_cse_cx, { mono: true })}</div>
-          <div class="field" style="margin-bottom:0">${fieldLabel('Crawler User-Agent', 'identify yourself to websites')}${input('crawler_user_agent', s.crawler_user_agent, { mono: true })}</div>
-        </section>
-
-        <section class="card">
           ${cardHead({ icon: 'at', title: 'Sender identities', sub: 'Send campaigns and automations from different email addresses', aside: `<span class="badge outline lg">${senders.filter((x) => x.verified).length || 1} verified</span>` })}
           <div id="senders">${senders.length ? senders.map((x) => `
             <div class="list-row"><div class="avatar">${esc(initials(x.email))}</div>
@@ -169,16 +176,16 @@
             <button type="button" class="btn" id="refresh-senders">${icon('refresh', 16)}Refresh from SES</button>
             ${admin ? `<button type="button" class="btn" id="test-mail" ${mail.configured ? '' : 'disabled title="Amazon SES is not set up on the server"'}>${icon('send', 16)}Send a test email to me</button>` : ''}</div>
         </section>
-
+      </div>
+      <div class="grid cols-2 tab-panel" role="tabpanel" id="panel-integrations" aria-labelledby="tab-integrations" data-panel="integrations" ${tab === 'integrations' ? '' : 'hidden'}>
         <section class="card">
-          ${cardHead({ icon: 'shield', tone: 'violet', title: 'Access', sub: 'Who can sign in to Emailing' })}
-          <p class="muted" style="margin-top:0">Staff sign in with their GrandPine account. Access is granted in the IAM Workspace, on the Emailing app:</p>
-          <ul class="muted">
-            <li><b>Admin</b> also manages these settings and the integration keys.</li>
-            <li><b>Editor</b> works with campaigns, contacts, templates and automations.</li>
-            <li><b>Viewer</b> can look but not change anything.</li>
-          </ul>
-          <div class="hint">You are signed in as <b>${esc(App.me.email)}</b> (${esc(App.me.role === 'member' ? 'editor' : App.me.role)}).</div>
+          ${cardHead({ icon: 'key', tone: 'orange', title: 'Lead finder sources', sub: 'API keys for automated email finding & enrichment', aside: `<span class="badge outline lg">${providers} Provider${providers === 1 ? '' : 's'}</span>` })}
+          <p class="muted" style="margin-top:0">Without keys, the Lead Finder uses DuckDuckGo search and crawls public company websites. Google Programmable Search gives 100 free queries/day.</p>
+          <div class="field">${fieldLabel('Hunter.io API key', '<a href="https://hunter.io/api-keys" target="_blank" rel="noopener">hunter.io → API</a>')}${input('hunter_api_key', s.hunter_api_key, { secret: true, placeholder: 'Enter Hunter secret token' })}</div>
+          <div class="field">${fieldLabel('Apollo.io API key', '<a href="https://app.apollo.io/#/settings/integrations/api" target="_blank" rel="noopener">apollo.io → Settings → API</a>')}${input('apollo_api_key', s.apollo_api_key, { secret: true, placeholder: 'Enter Apollo API key…' })}</div>
+          <div class="field">${fieldLabel('Google Programmable Search API key', 'Cloud Console')}${input('google_cse_key', s.google_cse_key, { secret: true, placeholder: 'AIzaSy…' })}</div>
+          <div class="field">${fieldLabel('Google Search engine ID (cx)')}${input('google_cse_cx', s.google_cse_cx, { mono: true })}</div>
+          <div class="field" style="margin-bottom:0">${fieldLabel('Crawler User-Agent', 'identify yourself to websites')}${input('crawler_user_agent', s.crawler_user_agent, { mono: true })}</div>
         </section>
 
         <section class="card">
@@ -209,10 +216,10 @@
         </section>
 
         <section class="card">
-          ${cardHead({ icon: 'whatsapp', tone: 'wa', title: 'GPC WhatsApp', sub: 'The company platform: automations and payment WhatsApp messages (Transactional page)', aside: (s.gpc_whatsapp_url && s.gpc_whatsapp_key) ? '<span class="badge green lg"><span class="dot"></span>Connected</span>' : '<span class="badge lg">Not set up</span>' })}
+          ${cardHead({ icon: 'whatsapp', tone: 'wa', title: 'GPC WhatsApp', sub: 'The company platform: automations and payment WhatsApp messages (Settings → Transactional e-mails)', aside: (s.gpc_whatsapp_url && s.gpc_whatsapp_key) ? '<span class="badge green lg"><span class="dot"></span>Connected</span>' : '<span class="badge lg">Not set up</span>' })}
           <div class="field">${fieldLabel('Platform address')}${input('gpc_whatsapp_url', s.gpc_whatsapp_url, { mono: true, placeholder: 'https://whatsapp.grandpine.com' })}</div>
           <div class="field">${fieldLabel('Channel for automations', 'blank = the company default number')}${input('gpc_whatsapp_channel', s.gpc_whatsapp_channel, { mono: true, placeholder: 'blank, personal, or a channel id' })}
-            <div class="hint"><b>personal</b> is the company's free personal number (text only, no templates). A channel id sends from that number; ids are listed on the Transactional page.</div></div>
+            <div class="hint"><b>personal</b> is the company's free personal number (text only, no templates). A channel id sends from that number; ids are listed in Settings → Transactional e-mails.</div></div>
           <div class="field">${fieldLabel('API key', 'GPC WhatsApp → API keys')}${input('gpc_whatsapp_key', s.gpc_whatsapp_key, { secret: true, placeholder: 'gpc_live_…' })}
             <div class="hint">Create the key in the company's GPC WhatsApp console with the scopes <b>read</b> and <b>messages:write</b>. Messages sent this way appear in that inbox, and its opt-outs and daily limits apply.</div></div>
           <div class="field">${fieldLabel('Replies and delivery status', 'GPC WhatsApp webhook')}
@@ -244,9 +251,10 @@
           ${admin ? `<button type="button" class="btn" id="regen">${icon('refresh', 16)}Generate new secret</button>` : ''}
         </section>
       </div>
-      ${admin ? `<button type="button" class="btn primary lg block" id="save-bottom" style="margin-top:24px">${icon('check', 18)}Save changes</button>
+      ${admin ? `<button type="button" class="btn primary lg block" id="save-bottom" data-settings-only ${tab === 'transactional' ? 'hidden' : ''} style="margin-top:24px">${icon('check', 18)}Save changes</button>
 ` : ''}
-      </form>`;
+      </form>
+      <div class="tab-panel" role="tabpanel" id="panel-transactional" aria-labelledby="tab-transactional" data-panel="transactional" ${tab === 'transactional' ? '' : 'hidden'}></div>`;
 
     const form = root.querySelector('#settings');
     if (!admin) form.querySelectorAll('input[name], select[name], textarea[name]').forEach((el) => { el.disabled = true; });
@@ -321,6 +329,50 @@
       root.querySelector('#save').onclick = () => save();
       root.querySelector('#save-bottom').onclick = () => save();
     }
+
+    // Tabs: a click shows the panel and puts the tab in the address without drawing the page again
+    // (so unsaved fields are kept); arrow keys, Home and End move between the tabs.
+    const tabBtns = [...root.querySelectorAll('[role=tab]')];
+    let txnDrawn = false;
+    const drawTxn = () => {
+      if (txnDrawn) return;
+      txnDrawn = true;
+      const panel = root.querySelector('#panel-transactional');
+      panel.innerHTML = '<div class="empty">Loading…</div>';
+      const q = (/\?(.*)$/.exec(location.hash) || [])[1] || '';
+      window.TransactionalPanel.render(panel, q).catch((err) => {
+        console.error(err);
+        txnDrawn = false;
+        panel.innerHTML = `<div class="card"><h2>Something went wrong</h2><p>${esc(err.message)}</p></div>`;
+      });
+    };
+    const showTab = (id) => {
+      tab = id;
+      tabBtns.forEach((b) => {
+        const on = b.dataset.tab === id;
+        b.setAttribute('aria-selected', String(on));
+        b.tabIndex = on ? 0 : -1;
+      });
+      root.querySelectorAll('.tab-panel').forEach((p) => { p.hidden = p.dataset.panel !== id; });
+      root.querySelectorAll('[data-settings-only]').forEach((el) => { el.hidden = id === 'transactional'; });
+      if (id === 'transactional') drawTxn();
+    };
+    tabBtns.forEach((b, i) => {
+      b.onclick = () => {
+        if (b.dataset.tab === tab) return;
+        history.pushState(null, '', hashFor(b.dataset.tab));
+        showTab(b.dataset.tab);
+      };
+      b.onkeydown = (e) => {
+        const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabBtns.length - 1 }[e.key];
+        if (to === undefined) return;
+        e.preventDefault();
+        const next = tabBtns[(to + tabBtns.length) % tabBtns.length];
+        next.focus();
+        next.click();
+      };
+    });
+    if (tab === 'transactional') drawTxn();
 
     // default From: the name box and the identity picker make the one saved address
     const fromLocalEl = root.querySelector('#from-local');
