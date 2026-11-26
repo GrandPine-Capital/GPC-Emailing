@@ -174,6 +174,26 @@ func (s *Service) receiveWhatsApp(ctx context.Context, c *Contact, phone, text, 
 	return true, nil
 }
 
+// incomingWhatsApp is the part every WhatsApp inbound route shares (ChatDaddy's webhook and
+// GPC-WhatsApp's message.received): the sender's number is normalised to the phone_key form, the
+// contact is found or created (an unknown number becomes a contact with source whatsapp), and
+// the message is recorded once per externalID. It reports false when the number is unusable.
+func (s *Service) incomingWhatsApp(ctx context.Context, rawPhone, name, text, externalID string) (bool, error) {
+	phone := core.PhoneKey(rawPhone, s.Settings(ctx).DefaultCountryCode)
+	if phone == "" {
+		return false, nil
+	}
+	c, err := s.UpsertInboundContact(ctx, InboundContact{Phone: "+" + phone, Name: name, Source: "whatsapp"})
+	if err != nil {
+		return false, err
+	}
+	if text == "" {
+		text = "[attachment]"
+	}
+	_, err = s.receiveWhatsApp(ctx, c, phone, text, externalID)
+	return err == nil, err
+}
+
 var groupChatRe = regexp.MustCompile(`@g\.us$`)
 
 // HandleWebhook handles POST /hook. params are the query parameters (and form fields), raw the
@@ -207,7 +227,6 @@ func (s *Service) HandleWebhook(ctx context.Context, params map[string]string, r
 		case map[string]any:
 			items = []any{d}
 		}
-		cc := s.Settings(ctx).DefaultCountryCode
 		handled := 0
 		for _, it := range items {
 			m, _ := it.(map[string]any)
@@ -218,10 +237,6 @@ func (s *Service) HandleWebhook(ctx context.Context, params map[string]string, r
 			if groupChatRe.MatchString(chatID) {
 				continue
 			}
-			phone := core.PhoneKey(chatID, cc)
-			if phone == "" {
-				continue
-			}
 			name := ""
 			if sender, ok := m["sender"].(map[string]any); ok {
 				name = str(sender["name"])
@@ -229,16 +244,13 @@ func (s *Service) HandleWebhook(ctx context.Context, params map[string]string, r
 					name = str(sender["pushName"])
 				}
 			}
-			c, err := s.UpsertInboundContact(ctx, InboundContact{Phone: "+" + phone, Name: name, Source: "whatsapp"})
+			text := str(m["text"])
+			ok, err := s.incomingWhatsApp(ctx, chatID, name, text, str(m["id"]))
 			if err != nil {
 				return nil, err
 			}
-			text := str(m["text"])
-			if text == "" {
-				text = "[attachment]"
-			}
-			if _, err := s.receiveWhatsApp(ctx, c, phone, text, str(m["id"])); err != nil {
-				return nil, err
+			if !ok {
+				continue
 			}
 			handled++
 		}

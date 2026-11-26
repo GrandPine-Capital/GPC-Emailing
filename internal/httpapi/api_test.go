@@ -300,3 +300,52 @@ func TestCRMHookRoutes(t *testing.T) {
 		t.Fatalf("event: %d %v", code, out)
 	}
 }
+
+// TestWhatsAppHookRoute: GPC-WhatsApp's webhook answers 503 without the secret, 401 for a bad or
+// unprefixed signature, 400 for a body that is not JSON or over 256 KB, and 200 for a signed
+// delivery, including an event it ignores.
+func TestWhatsAppHookRoute(t *testing.T) {
+	srv, svc, _ := server(t)
+	post := func(body, sig string) (int, map[string]any) {
+		t.Helper()
+		req, _ := http.NewRequest("POST", srv.URL+"/hooks/whatsapp", strings.NewReader(body))
+		req.Header.Set("X-GPC-Event", "message.status")
+		req.Header.Set("X-GPC-Signature", sig)
+		res, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(res.Body).Decode(&out)
+		return res.StatusCode, out
+	}
+	sign := func(body string) string {
+		m := hmac.New(sha256.New, []byte("wh-secret"))
+		m.Write([]byte(body))
+		return hex.EncodeToString(m.Sum(nil))
+	}
+	ping := `{"event":"ping","data":{}}`
+	if code, _ := post(ping, "sha256="+sign(ping)); code != http.StatusServiceUnavailable {
+		t.Fatalf("no secret: %d", code)
+	}
+	if err := svc.UpdateSettings(context.Background(), map[string]any{"gpc_whatsapp_webhook_secret": "wh-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := post(ping, "sha256=00"); code != http.StatusUnauthorized {
+		t.Fatalf("bad signature: %d", code)
+	}
+	if code, _ := post(ping, sign(ping)); code != http.StatusUnauthorized {
+		t.Fatalf("signature without sha256=: %d", code)
+	}
+	if code, _ := post("nope", "sha256="+sign("nope")); code != http.StatusBadRequest {
+		t.Fatalf("not JSON: %d", code)
+	}
+	big := `{"event":"ping","pad":"` + strings.Repeat("a", 300<<10) + `"}`
+	if code, _ := post(big, "sha256="+sign(big)); code != http.StatusBadRequest {
+		t.Fatalf("too large: %d", code)
+	}
+	if code, out := post(ping, "sha256="+sign(ping)); code != http.StatusOK || out["ignored"] == nil {
+		t.Fatalf("ping: %d %v", code, out)
+	}
+}
