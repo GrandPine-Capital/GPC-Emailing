@@ -228,7 +228,9 @@ func (s *Service) txnVars(ctx context.Context, r *TxnRow) map[string]string {
 		vars[k] = v
 	}
 	if vars["first_name"] == "" {
-		vars["first_name"] = strings.Fields(r.ToName + " ")[0]
+		if f := strings.Fields(r.ToName); len(f) > 0 { // no name (an alert to staff): left empty
+			vars["first_name"] = f[0]
+		}
 	}
 	if vars["full_name"] == "" {
 		vars["full_name"] = r.ToName

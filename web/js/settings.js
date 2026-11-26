@@ -196,6 +196,8 @@
             <div class="hint"><b>personal</b> is the company's free personal number (text only, no templates). A channel id sends from that number; ids are listed on the Transactional page.</div></div>
           <div class="field">${fieldLabel('API key', 'GPC WhatsApp → API keys')}${input('gpc_whatsapp_key', s.gpc_whatsapp_key, { secret: true, placeholder: 'gpc_live_…' })}
             <div class="hint">Create the key in the company's GPC WhatsApp console with the scopes <b>read</b> and <b>messages:write</b>. Messages sent this way appear in that inbox, and its opt-outs and daily limits apply.</div></div>
+          <div class="field">${fieldLabel('CRM hook secret', 'crm.grandpine.com')}${input('crm_hook_secret', s.crm_hook_secret, { secret: true, placeholder: 'a long random string' })}
+            <div class="hint">The CRM signs its contact sync and e-mail events with this.</div></div>
         </section>
 
         <section class="card">

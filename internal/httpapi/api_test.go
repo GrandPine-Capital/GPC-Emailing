@@ -257,3 +257,46 @@ func TestPaymentHookRoute(t *testing.T) {
 		t.Fatalf("unknown type: %d %v, sent %d", code, out, len(mail.sent))
 	}
 }
+
+// TestCRMHookRoutes: both CRM routes answer 503 without the secret, 401 for a bad signature, 400
+// for a malformed body and 200 for a signed one.
+func TestCRMHookRoutes(t *testing.T) {
+	srv, svc, _ := server(t)
+	post := func(path, body, secret string) (int, map[string]any) {
+		t.Helper()
+		req, _ := http.NewRequest("POST", srv.URL+path, strings.NewReader(body))
+		m := hmac.New(sha256.New, []byte(secret))
+		m.Write([]byte(body))
+		req.Header.Set("sig", hex.EncodeToString(m.Sum(nil)))
+		res, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(res.Body).Decode(&out)
+		return res.StatusCode, out
+	}
+	contacts := `{"tagPrefix":"crm:","contacts":[{"email":"a@b.my","tags":["crm:vip"]}]}`
+	if code, _ := post("/hooks/crm/contacts", contacts, "s3cret"); code != http.StatusServiceUnavailable {
+		t.Fatalf("no secret: %d", code)
+	}
+	if err := svc.UpdateSettings(context.Background(), map[string]any{"crm_hook_secret": "s3cret"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/hooks/crm/contacts", "/hooks/crm/events"} {
+		if code, _ := post(path, contacts, "wrong"); code != http.StatusUnauthorized {
+			t.Fatalf("%s bad signature: %d", path, code)
+		}
+		if code, _ := post(path, "nope", "s3cret"); code != http.StatusBadRequest {
+			t.Fatalf("%s malformed: %d", path, code)
+		}
+	}
+	if code, out := post("/hooks/crm/contacts", contacts, "s3cret"); code != http.StatusOK || out["created"] != float64(1) {
+		t.Fatalf("contacts: %d %v", code, out)
+	}
+	ev := `{"type":"crm.payment_failed","key":"k1","to":{"name":"Tan","email":"a@b.my"},"vars":{"product":"VF Pro"}}`
+	if code, out := post("/hooks/crm/events", ev, "s3cret"); code != http.StatusOK || out["status"] != "sent" || out["created"] != true {
+		t.Fatalf("event: %d %v", code, out)
+	}
+}
