@@ -8,7 +8,7 @@
 
   function dryRunBanner(meta) {
     return meta.dryRun
-      ? '<div class="banner warn"><strong>Dry-run mode is on:</strong> emails are rendered and tracked but not delivered. Turn it off in <a href="#/settings">Settings</a>.</div>'
+      ? '<div class="banner warn"><strong>Dry-run mode is on:</strong> emails are rendered and tracked but not delivered. Turn it off in <a href="#/settings/sending">Settings → Sending</a>.</div>'
       : '';
   }
 
@@ -49,7 +49,7 @@
       </div>
       <div class="card"><h2>Getting started</h2>
         <ol style="margin:0;padding-left:20px;line-height:2">
-          <li>Review the sender, limits and sender identities in <a href="#/settings">Settings</a>.</li>
+          <li>Review the sender, limits and sender identities in <a href="#/settings/sending">Settings → Sending</a>.</li>
           <li>Import contacts from CSV in <a href="#/contacts">Contacts</a>, collect sign-ups with a <a href="#/forms">subscribe form</a> (double opt-in), or discover leads by country &amp; industry in <a href="#/leads">Lead Finder</a>.</li>
           <li>Design an email with the <a href="#/templates">drag &amp; drop builder or HTML editor</a> (standard templates included).</li>
           <li>Create a <a href="#/campaigns">campaign</a>, send a test, then send now or schedule.</li>
