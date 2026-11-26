@@ -269,6 +269,30 @@ func (s *Server) public(mux *http.ServeMux) {
 		}
 	})
 
+	// GPC-WhatsApp's signed outbound webhooks: incoming messages and delivery status.
+	mux.HandleFunc("POST /hooks/whatsapp", func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<10))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "body too large")
+			return
+		}
+		out, err := svc.HandleWhatsAppHook(r.Context(), r.Header.Get("X-GPC-Event"), r.Header.Get("X-GPC-Signature"), raw)
+		var ue app.UserError
+		switch {
+		case errors.Is(err, app.ErrWhatsAppHookOff):
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+		case errors.Is(err, app.ErrBadSignature):
+			writeError(w, http.StatusUnauthorized, err.Error())
+		case errors.As(err, &ue):
+			writeError(w, http.StatusBadRequest, ue.Msg)
+		case err != nil:
+			s.log.ErrorContext(r.Context(), "whatsapp hook", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+		default:
+			writeJSON(w, http.StatusOK, out)
+		}
+	})
+
 	// Images uploaded in the e-mail builder.
 	mux.HandleFunc("GET /img/{id}", func(w http.ResponseWriter, r *http.Request) {
 		mime, data, err := svc.Upload(r.Context(), r.PathValue("id"))
