@@ -108,7 +108,7 @@
           ${cardHead({ icon: 'mail', title: 'Sender', sub: 'Configure outbound email identity and headers' })}
           <div class="field">${fieldLabel('Default sender')}
             <div class="affix"><input type="text" value="${esc(account || 'not set')}" readonly>${account && mail.configured ? '<span class="suffix pill"><span class="badge green"><span class="dot"></span>SES</span></span>' : ''}</div>
-            <div class="hint">The default From address (below, under <b>Sender identities</b>); campaigns and automations may use any verified sender. Replies come back through ${esc(mail.reply_domain || 'the reply domain')} and are forwarded to the sender's mailbox.</div></div>
+            <div class="hint">The default From address (in the Sending tab, under <b>Sender identities</b>); campaigns and automations may use any verified sender. Replies come back through ${esc(mail.reply_domain || 'the reply domain')} and are forwarded to the sender's mailbox.</div></div>
           <div class="field">${fieldLabel('From name')}${input('from_name', s.from_name, { placeholder: 'My Company' })}</div>
           <div class="field">${fieldLabel('Reply-to <span class="hint-inline">(optional)</span>')}${input('reply_to', s.reply_to, { type: 'email', placeholder: 'team@company.com' })}</div>
           <div class="field" style="margin-bottom:0">${fieldLabel('Company postal address <span class="hint-inline">(required by CAN-SPAM; shown in footers)</span>')}
