@@ -25,6 +25,19 @@
     return `<input type="${type}" ${attrs}>`;
   }
 
+  /** The status line under GPC WhatsApp → Replies and delivery status. */
+  function waHookText(h) {
+    const prefix = 'Replies and delivery status: ';
+    const at = h.at ? new Date(h.at).toLocaleString() : '';
+    switch (h.state) {
+      case 'connected': return `${prefix}connected (created automatically${at ? ' ' + at : ''})`;
+      case 'manual': return `${prefix}connected (secret entered by hand)`;
+      case 'needs_scope': return `${prefix}the API key needs the scope webhooks:write — add it to the key in GPC-WhatsApp → API keys, then press Connect replies now`;
+      case 'failed': case 'no_url': return `${prefix}not connected yet (${h.reason || 'unknown reason'})`;
+      default: return `${prefix}not connected yet (${h.connected ? 'waiting for the first attempt' : 'enter the platform address and API key first'})`;
+    }
+  }
+
   /** How another sending domain or address is added (in AWS, by whoever runs the infrastructure). */
   function connectGuide(replyDomain) {
     App.modal(`<div class="row" style="align-items:center;margin-bottom:6px"><h2 style="margin:0;flex:1">Add a sending domain or address</h2><button class="btn icon ghost" data-close>${icon('x', 18)}</button></div>
@@ -220,9 +233,13 @@
             <div class="hint"><b>personal</b> is the company's free personal number (text only, no templates). A channel id sends from that number; ids are listed on the Transactional page.</div></div>
           <div class="field">${fieldLabel('API key', 'GPC WhatsApp → API keys')}${input('gpc_whatsapp_key', s.gpc_whatsapp_key, { secret: true, placeholder: 'gpc_live_…' })}
             <div class="hint">Create the key in the company's GPC WhatsApp console with the scopes <b>read</b> and <b>messages:write</b>. Messages sent this way appear in that inbox, and its opt-outs and daily limits apply.</div></div>
-          <div class="field">${fieldLabel('Webhook secret', 'GPC WhatsApp → Integrations → Outbound webhooks')}${input('gpc_whatsapp_webhook_secret', s.gpc_whatsapp_webhook_secret, { secret: true, placeholder: 'the webhook\'s signing secret' })}
+          <div class="field">${fieldLabel('Replies and delivery status', 'GPC WhatsApp webhook')}
+            <div class="hint" id="gw_hook_status">${esc(waHookText(s.gpc_whatsapp_webhook || {}))}</div>
+            ${admin ? `<div class="row" style="gap:8px;margin-top:8px"><button type="button" class="btn" id="gw-connect">${icon('refresh', 16)}Connect replies now</button></div>` : ''}
             <input type="text" class="mono" id="gw_hook" value="${esc(s.gpc_whatsapp_webhook_url || (admin ? '' : 'Admins only'))}" readonly style="margin-top:8px">
-            <div class="hint">Create a webhook in GPC-WhatsApp for message.received and message.status with this URL and secret</div></div>
+            <details style="margin-top:8px"><summary>Enter a secret by hand</summary>
+              ${input('gpc_whatsapp_webhook_secret', '', { secret: true, placeholder: 'the webhook\'s signing secret (write-only)' })}
+              <div class="hint">Only if you made the webhook yourself in GPC-WhatsApp (message.received and message.status, with the URL above). Leave empty to keep the current secret.</div></details></div>
         </section>
 
         <section class="card">
@@ -380,6 +397,16 @@
       await api.post('/integrations/test-whatsapp', { phone: root.querySelector('#wa-test').value, provider: form.querySelector('[name=whatsapp_provider]').value });
       toast('Test WhatsApp message sent');
     };
+    root.querySelector('#gw-connect')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        await save({ quiet: true });
+        const r = await api.post('/integrations/whatsapp-webhook');
+        root.querySelector('#gw_hook_status').textContent = waHookText(r);
+        toast(r.state === 'connected' || r.state === 'manual' ? 'Replies are connected' : 'Not connected yet: see the line above the button', r.state === 'connected' || r.state === 'manual' ? 'info' : 'error');
+      } catch { /* the API layer says why */ } finally { btn.disabled = false; }
+    });
     root.querySelector('#regen')?.addEventListener('click', async () => {
       if (!(await confirmDialog('Generate a new webhook secret? Existing webhook URLs in ChatDaddy or other apps stop working until you update them.', { okText: 'Generate', danger: false }))) return;
       await api.post('/settings/webhook-secret');
