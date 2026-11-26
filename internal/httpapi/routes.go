@@ -386,6 +386,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 		list, err := svc.RefreshSenders(r.Context())
 		s.reply(w, r, map[string]any{"ok": true, "senders": list}, err)
 	})
+	adm("POST "+p+"/integrations/whatsapp-webhook", func(w http.ResponseWriter, r *http.Request) {
+		svc.EnsureWhatsAppWebhook(r.Context())
+		s.reply(w, r, svc.WhatsAppHookStatus(r.Context()), nil)
+	})
 	adm("POST "+p+"/integrations/test-whatsapp", withBody(func(w http.ResponseWriter, r *http.Request, b body) {
 		text := sv(b["text"])
 		if text == "" {
