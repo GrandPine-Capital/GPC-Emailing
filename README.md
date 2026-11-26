@@ -265,7 +265,7 @@ Campaigns over the daily cap carry on the next day by themselves.
 | `internal/catalog` | Countries, focus industries, trigger and step names; `catalog.json` is generated from `web/shared/catalog.js` by `node scripts/gen-catalog.js` |
 | `internal/httpapi` | API routes, public routes, staff sign-in |
 | `web/` | The dashboard. `js/backend.js` is the API client; templates are rendered to HTML in the browser (`shared/render-blocks.js`) and the server sends the saved HTML |
-| `db/migration` | `V1` schema, `V2` standard templates and (paused) example automations, `V3`–`V7` transactional mail, `V9` transactional WhatsApp, `V10` Keycloak's account e-mails, `V11` the CRM's e-mails. `V8` (opt-in, forms and tag audiences) is on staging only: when it is released, run Flyway once with `-outOfOrder=true`, or give it the next free number |
+| `db/migration` | `V1` schema, `V2` standard templates and (paused) example automations, `V3`–`V7` transactional mail, `V9` transactional WhatsApp, `V10` Keycloak's account e-mails, `V12` the CRM's e-mails. `V8` (opt-in, forms and tag audiences) and `V11` (more Keycloak templates) are on staging only: when it is released, run Flyway once with `-outOfOrder=true`, or give it the next free number |
 
 ## Moving from the Firebase build
 
