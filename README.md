@@ -123,6 +123,55 @@ message; a 400, 401, 403 or 404 fails at once, anything else is retried like e-m
 for SES. The CRM (GPC-Lead) can send its own WhatsApp on payment events: switch that off before ticking
 these, or buyers get two.
 
+### The CRM's contact sync and e-mails
+
+The CRM (GPC-Lead, crm.grandpine.com) is the master of customer records and posts to two routes,
+both signed with header `sig` = lowercase hex HMAC-SHA256 of the raw body with the admin setting
+`crm_hook_secret` (Settings → Integrations, write-only; no env var). Secret unset: 503; bad or missing
+signature: 401; malformed body: 400. Unsubscribe state and the send log stay only here.
+
+**`POST /hooks/crm/contacts`** (body up to 2 MB, at most 500 contacts) is a quiet one-way sync:
+
+```json
+{"tagPrefix": "crm:", "contacts": [
+  {"email": "a@b.my", "externalId": "82092", "name": "Tan Ah Kow", "phone": "+60123456789",
+   "tags": ["crm:vip", "crm:cat:customer"], "subscribed": true},
+  {"email": "old@b.my", "externalId": "77", "remove": true}]}
+```
+
+- `tagPrefix` is required (1 to 20 characters) and every tag must start with it, else that contact is invalid.
+- Not present: created with source `crm`, name split into first and last name, phone, tags, and status
+  `subscribed` (`unsubscribed` if `"subscribed": false`).
+- Present: name and phone are overwritten when given and non-empty; the tags with the prefix are replaced by
+  the request's; other tags and the lists are never touched; the status is never changed (an
+  unsubscribed, bounced or complained contact stays so).
+- `remove: true` never deletes: it strips the prefixed tags only. An unknown address is left alone.
+- A contact already equal to the request counts as `unchanged` and is not written.
+- It starts no automation (no contact-added or tag-added), sends nothing and calls no WhatsApp service.
+- One bad contact never fails the batch. Answer: `{"ok": true, "created": n, "updated": n, "unchanged": n,
+  "invalid": [{"index": i, "reason": "…"}]}`; reasons never repeat an address, name or number.
+  An address twice in one call is invalid the second time.
+
+**`POST /hooks/crm/events`** (body up to 64 KB) asks for a transactional e-mail, like `/hooks/payments`:
+
+```json
+{"type": "crm.payment_failed", "key": "payment_failed__pay_123", "to": {"name": "Tan", "email": "a@b.my"},
+ "vars": {"product": "VF Pro", "amount": "199.00", "currency": "MYR", "reference": "INV-1"}}
+```
+
+| Type | Template key |
+|---|---|
+| `crm.payment_failed` | `crm_payment_failed` |
+| `crm.registration_confirmed` | `crm_registration_confirmed` |
+| `crm.registration_failed` | `crm_registration_failed` |
+| `crm.owner_alert` (staff only; `vars.subject` and `vars.body` are the whole message, shown as escaped plain text) | `crm_owner_alert` |
+
+Each has its own on/off switch, template and sender on the Transactional page (all on by default) and is
+sent whatever the person's marketing status, without tracking or an unsubscribe footer. `key` makes it
+once-only (source `crm`): the same key again answers `created: false`. Answer `{"ok": true, "id", "created",
+"status"}`, or `{"ok": true, "ignored": "…"}` for an unknown type, a switched-off event or no e-mail address.
+Only `product`, `amount`, `currency`, `reference`, `subject` and `body` are read from `vars`.
+
 ### Keycloak's account e-mails
 
 The Keycloak image (ValueFarm.KeycloakTheme, `providers/gpc-email-hook`) hands its account e-mails to
@@ -238,7 +287,7 @@ Campaigns over the daily cap carry on the next day by themselves.
 | `internal/catalog` | Countries, focus industries, trigger and step names; `catalog.json` is generated from `web/shared/catalog.js` by `node scripts/gen-catalog.js` |
 | `internal/httpapi` | API routes, public routes, staff sign-in |
 | `web/` | The dashboard. `js/backend.js` is the API client; templates are rendered to HTML in the browser (`shared/render-blocks.js`) and the server sends the saved HTML |
-| `db/migration` | `V1` schema, `V2` standard templates and (paused) example automations, `V3`–`V7` transactional mail, `V8` opt-in, forms and tag audiences, `V9` WhatsApp notices, `V10` Keycloak's account e-mails, `V11` the rest of Keycloak's e-mails as templates (not sent from here yet) |
+| `db/migration` | `V1` schema, `V2` standard templates and (paused) example automations, `V3`–`V7` transactional mail, `V8` opt-in, forms and tag audiences, `V9` WhatsApp notices, `V10` Keycloak's account e-mails, `V11` the rest of Keycloak's e-mails as templates (not sent from here yet), `V12` the CRM's e-mails |
 
 ## Moving from the Firebase build
 

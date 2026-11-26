@@ -31,6 +31,10 @@ var TxnEvents = []TxnEvent{
 	{"keycloak.execute_actions", "keycloak", "Account action e-mail (set a new password)", "Sent by Keycloak when a user asks ValueFarm for a new password, or staff send \"Credential reset\" from the admin console. Off: Keycloak sends its own e-mail.", "keycloak_execute_actions"},
 	{"keycloak.password_reset", "keycloak", "Forgot password (login page)", "Sent by Keycloak when a user uses \"Forgot password?\" on the sign-in page. Off: Keycloak sends its own e-mail.", "keycloak_password_reset"},
 	{"keycloak.verify_email", "keycloak", "Verify e-mail address", "Sent by Keycloak when a user has to confirm their e-mail address. Off: Keycloak sends its own e-mail.", "keycloak_verify_email"},
+	{"crm.payment_failed", "crm", "CRM: payment failed", "Sent when the CRM reports that a customer's payment did not go through.", "crm_payment_failed"},
+	{"crm.registration_confirmed", "crm", "CRM: registration confirmed", "Sent when the CRM confirms a customer's registration.", "crm_registration_confirmed"},
+	{"crm.registration_failed", "crm", "CRM: registration failed", "Sent when the CRM could not complete a customer's registration.", "crm_registration_failed"},
+	{"crm.owner_alert", "crm", "CRM: alert to staff", "Internal alert the CRM sends to staff; its subject and text are written by the CRM.", "crm_owner_alert"},
 }
 
 func txnEvent(event string) (TxnEvent, bool) {
@@ -118,7 +122,7 @@ func (s *Service) TransactionalConfig(ctx context.Context) (map[string]any, erro
 		"events": events, "from_email": cfg.FromEmail, "from_name": cfg.FromName,
 		"effective_from_email": from, "effective_from_name": name,
 		"default_from_email": s.mailCfg.TransactionalFrom, "no_reply": IsNoReply(from),
-		"payment_hook": s.PaymentEventSecret != "", "keycloak_hook": s.KeycloakEventSecret != "", "whatsapp_connected": connected,
+		"payment_hook": s.PaymentEventSecret != "", "keycloak_hook": s.KeycloakEventSecret != "", "crm_hook": s.Secrets(ctx)["crm_hook_secret"] != "", "whatsapp_connected": connected,
 	}, nil
 }
 

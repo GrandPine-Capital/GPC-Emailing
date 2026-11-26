@@ -16,7 +16,7 @@
   // Helpdesk and Keycloak events: on/off, template, WhatsApp copy), the Keycloak templates that
   // nothing sends yet, and the standard lifecycle flows still to be created as automations.
 
-  const STAGE = { payment: 'Billing', helpdesk: 'Account & security', keycloak: 'Account & security' };
+  const STAGE = { payment: 'Billing', helpdesk: 'Account & security', keycloak: 'Account & security', crm: 'CRM' };
   const stageOf = (e) => (e.event === 'subscription.charge_upcoming' ? 'Trial' : STAGE[e.source] || 'Other');
 
   // Standard lifecycle flows. `event` is what the product posts to the webhook (Settings →
@@ -103,7 +103,7 @@
         </div></div>`;
     };
     const badge = (text, color = '') => `<span class="badge ${color}">${text}</span>`;
-    const hookOff = (e) => (e.source === 'payment' && !cfg.payment_hook) || (e.source === 'keycloak' && !cfg.keycloak_hook);
+    const hookOff = (e) => (e.source === 'payment' && !cfg.payment_hook) || (e.source === 'keycloak' && !cfg.keycloak_hook) || (e.source === 'crm' && !cfg.crm_hook);
 
     const eventRows = cfg.events.map((e) => `<tr data-row="${esc(e.event)}">
         <td>${esc(stageOf(e))}</td>
@@ -238,6 +238,7 @@
       })}
       ${cfg.payment_hook ? '' : '<div class="banner warn">Payment events are not connected on this server (PAYMENT_EVENT_SECRET), so nothing here is sent yet.</div>'}
       ${cfg.keycloak_hook ? '' : '<div class="banner">The Keycloak emails below are not connected on this server (KEYCLOAK_EVENT_SECRET): Keycloak sends its own account emails.</div>'}
+      ${cfg.crm_hook ? '' : '<div class="banner">The CRM emails below are not connected: set the CRM hook secret in <a href="#/settings">Settings → Integrations</a>.</div>'}
       <div class="banner info"><span>Which of these emails are on, the template each uses and its WhatsApp copy are now set under <a href="#/automations"><b>Automations → System &amp; lifecycle emails</b></a>. This page keeps the sender and everything sent.</span></div>
       <form id="txn" data-nosubmit autocomplete="off">
       <div class="grid cols-2" style="margin-bottom:24px">
