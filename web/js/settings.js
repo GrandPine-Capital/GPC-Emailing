@@ -189,13 +189,17 @@
           <div class="row">
             <div class="field">${fieldLabel('Default provider')}<select name="whatsapp_provider">
               <option value="gpc_whatsapp" ${(s.whatsapp_provider || 'gpc_whatsapp') === 'gpc_whatsapp' ? 'selected' : ''}>GPC-WhatsApp (recommended)</option>
-              <option value="chatdaddy" ${s.whatsapp_provider === 'chatdaddy' ? 'selected' : ''}>ChatDaddy (fallback)</option>
+              <option value="chatdaddy" id="opt-cd" ${s.whatsapp_provider === 'chatdaddy' ? 'selected' : ''} ${s.chatdaddy_enabled ? '' : 'hidden disabled'}>ChatDaddy (fallback)</option>
               <option value="cloud" ${s.whatsapp_provider === 'cloud' ? 'selected' : ''}>WhatsApp Cloud API (Meta, fallback)</option></select></div>
             <div class="field">${fieldLabel('Default country code', 'for local numbers')}${input('default_country_code', s.default_country_code, { placeholder: 'e.g. 60 for Malaysia', suffix: '' })}</div>
           </div>
           <h3 style="margin-top:4px">ChatDaddy <span class="hint-inline" style="font-weight:400">(fallback)</span></h3>
+          <div class="field"><label class="check"><input type="checkbox" name="chatdaddy_enabled" id="cd-switch" ${s.chatdaddy_enabled ? 'checked' : ''} ${admin ? '' : 'disabled'}> Use ChatDaddy</label>
+            <div class="hint">Off: nothing is sent to or accepted from ChatDaddy; WhatsApp goes through GPC-WhatsApp.</div></div>
+          <div id="cd-fields" ${s.chatdaddy_enabled ? '' : 'hidden'}>
           <div class="field">${fieldLabel('ChatDaddy API token', '<a href="https://app.chatdaddy.tech/settings/api" target="_blank" rel="noopener">app.chatdaddy.tech → Settings → API</a>')}${input('chatdaddy_token', s.chatdaddy_token, { secret: true, placeholder: 'API token with messages & contacts scopes' })}</div>
           <div class="field">${fieldLabel('ChatDaddy channel (account ID)', '"random" = any connected number')}${input('chatdaddy_account_id', s.chatdaddy_account_id || 'random', { mono: true })}</div>
+          </div>
           <h3>WhatsApp Cloud API <span class="hint-inline" style="font-weight:400">(fallback)</span></h3>
           <div class="row">
             <div class="field">${fieldLabel('Phone number ID')}${input('whatsapp_phone_number_id', s.whatsapp_phone_number_id, { mono: true, placeholder: '1234567890' })}</div>
@@ -254,6 +258,19 @@
       const el = form.querySelector(`[name="${b.dataset.copyFrom}"]`) || form.querySelector(`#${b.dataset.copyFrom}`);
       copy(el && el.value);
     }));
+
+    // "Use ChatDaddy": the switch shows or hides the ChatDaddy fields and its place in the provider picker
+    // (the fields stay in the form, so their values are still posted).
+    const cdSwitch = form.querySelector('#cd-switch');
+    if (cdSwitch) cdSwitch.addEventListener('change', () => {
+      const on = cdSwitch.checked;
+      form.querySelector('#cd-fields').hidden = !on;
+      const opt = form.querySelector('#opt-cd');
+      opt.hidden = !on;
+      opt.disabled = !on;
+      const pick = form.querySelector('[name=whatsapp_provider]');
+      if (!on && pick.value === 'chatdaddy') pick.value = 'gpc_whatsapp';
+    });
 
     // save (manual + auto)
     const state = root.querySelector('#save-state');
