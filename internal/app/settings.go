@@ -32,13 +32,16 @@ type Settings struct {
 	// GPCWhatsAppURL is the GPC-WhatsApp platform payment WhatsApp messages go through (with the
 	// secret gpc_whatsapp_key, an API key of the company there).
 	GPCWhatsAppURL string `json:"gpc_whatsapp_url"`
-	Timezone       string `json:"timezone"`
+	// GPCWhatsAppChannel is the GPC-WhatsApp channel automation messages go from: empty = the
+	// company's default number, "personal" = its free personal number (text only), or a channel id.
+	GPCWhatsAppChannel string `json:"gpc_whatsapp_channel"`
+	Timezone           string `json:"timezone"`
 }
 
 func defaultSettings() Settings {
 	return Settings{
 		FromName: "My Company", DailyLimit: 100, PerRunLimit: 40,
-		CrawlerUserAgent: "EmailingLeadFinder/1.0 (+GrandPine Capital)", WhatsAppProvider: "chatdaddy",
+		CrawlerUserAgent: "EmailingLeadFinder/1.0 (+GrandPine Capital)", WhatsAppProvider: ProviderGPC,
 		ChatDaddyAccountID: "random", WhatsAppTemplateLanguage: "en", Timezone: "Asia/Kuala_Lumpur",
 	}
 }
@@ -49,7 +52,7 @@ var SecretKeys = []string{"hunter_api_key", "apollo_api_key", "google_cse_key", 
 var textSettings = map[string]bool{
 	"from_name": true, "reply_to": true, "company_address": true, "crawler_user_agent": true, "default_from_email": true,
 	"default_country_code": true, "timezone": true, "whatsapp_provider": true, "chatdaddy_account_id": true,
-	"whatsapp_phone_number_id": true, "whatsapp_template_language": true, "gpc_whatsapp_url": true,
+	"whatsapp_phone_number_id": true, "whatsapp_template_language": true, "gpc_whatsapp_url": true, "gpc_whatsapp_channel": true,
 }
 
 // Settings reads the workspace settings over the defaults.

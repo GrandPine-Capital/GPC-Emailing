@@ -206,6 +206,10 @@ type stepResult struct {
 
 var unitDur = map[string]time.Duration{"minutes": time.Minute, "hours": time.Hour, "days": 24 * time.Hour}
 
+// maxWhatsAppStepRetries bounds the hourly retries of a send the platform answered with a
+// temporary error (a day's worth), after which the run fails like any other failed step.
+const maxWhatsAppStepRetries = 24
+
 var reRe = regexp.MustCompile(`(?i)^\s*re\s*:\s*`)
 
 func (s *Service) whatsappVars(ctx context.Context, c *Contact) map[string]string {
@@ -319,19 +323,30 @@ func (s *Service) executeStep(ctx context.Context, step map[string]any, run *Run
 				params = append(params, v)
 			}
 		}
-		provider := str(step["provider"])
-		if err := s.SendWhatsApp(ctx, s.contactPhone(ctx, c), WhatsAppOpts{Provider: provider, Text: text, Template: str(step["template_name"]), Language: str(step["language"]), Params: params}); err != nil {
+		provider := s.whatsAppProvider(ctx, str(step["provider"]))
+		msgID, err := s.SendWhatsApp(ctx, s.contactPhone(ctx, c), WhatsAppOpts{Provider: provider, Text: text, Template: str(step["template_name"]), Language: str(step["language"]), Params: params,
+			Ref: run.ID, IdempotencyKey: fmt.Sprintf("emailing:%s#%d", run.ID, run.StepIndex)})
+		if err != nil {
+			var we *WhatsAppError
+			key := fmt.Sprintf("wa_retries_%d", run.StepIndex)
+			if errors.As(err, &we) && we.Temporary && int(num(rc[key])) < maxWhatsAppStepRetries {
+				// Busy or down: try this step again in an hour (the key keeps it from going out twice).
+				rc[key] = num(rc[key]) + 1
+				until := s.now().Add(time.Hour)
+				return stepResult{waitUntil: &until, note: "WhatsApp not sent yet (" + err.Error() + "), retrying later"}, nil
+			}
 			return stepResult{}, err
 		}
 		logged := text
 		if logged == "" {
 			logged = "template " + str(step["template_name"])
 		}
-		s.logWhatsApp(ctx, c, "out", logged, run.AutomationID)
-		if provider == "" {
-			provider = s.Settings(ctx).WhatsAppProvider
+		s.logWhatsApp(ctx, c, "out", logged, run.AutomationID, msgID)
+		note := "WhatsApp sent via " + provider
+		if msgID != "" {
+			note += " (message " + msgID + ")"
 		}
-		return stepResult{note: "WhatsApp sent via " + provider}, nil
+		return stepResult{note: note}, nil
 
 	case "chatdaddy_contact":
 		var tags []string
@@ -463,7 +478,9 @@ func (s *Service) executeStep(ctx context.Context, step map[string]any, run *Run
 			if sub := str(step["subject"]); sub != "" {
 				text = sub + "\n" + summary
 			}
-			if err := s.SendWhatsApp(ctx, wa, WhatsAppOpts{Provider: str(step["provider"]), Text: text}); err != nil {
+			// One notice per run, step and number: a retry of the step does not repeat it.
+			if _, err := s.SendWhatsApp(ctx, wa, WhatsAppOpts{Provider: str(step["provider"]), Text: text, Ref: run.ID,
+				IdempotencyKey: fmt.Sprintf("emailing:%s#%d:notify:%s", run.ID, run.StepIndex, core.PhoneKey(wa, s.Settings(ctx).DefaultCountryCode))}); err != nil {
 				return stepResult{}, err
 			}
 			notes = append(notes, "WhatsApp "+wa)

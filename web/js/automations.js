@@ -243,9 +243,10 @@
             <label class="check"><input type="checkbox" data-k="reply_in_thread" ${s.reply_in_thread ? 'checked' : ''}> Send as a reply in the same email thread ("Re: …")</label>`;
         case 'send_whatsapp': {
           const provider = s.provider || '';
-          const cloud = provider === 'cloud' || (!provider && settings.whatsapp_provider === 'cloud');
-          return field('Send with', `<select data-k="provider"><option value="">Default (${settings.whatsapp_provider === 'cloud' ? 'WhatsApp Cloud API' : 'ChatDaddy'})</option><option value="chatdaddy" ${provider === 'chatdaddy' ? 'selected' : ''}>ChatDaddy</option><option value="cloud" ${provider === 'cloud' ? 'selected' : ''}>WhatsApp Cloud API</option></select>`) +
-            (cloud
+          const dflt = settings.whatsapp_provider || 'gpc_whatsapp';
+          const templ = (provider || dflt) !== 'chatdaddy';
+          return field('Send with', `<select data-k="provider"><option value="">Default (${{ cloud: 'WhatsApp Cloud API', chatdaddy: 'ChatDaddy' }[dflt] || 'GPC-WhatsApp'})</option><option value="gpc_whatsapp" ${provider === 'gpc_whatsapp' ? 'selected' : ''}>GPC-WhatsApp</option><option value="chatdaddy" ${provider === 'chatdaddy' ? 'selected' : ''}>ChatDaddy</option><option value="cloud" ${provider === 'cloud' ? 'selected' : ''}>WhatsApp Cloud API</option></select>`) +
+            (templ
               ? `<div class="row">${field('Approved template name', inp('template_name', s.template_name, 'placeholder="follow_up"'), 'Meta requires an approved template to start a conversation. Leave empty to send the text below (only within 24h of their last message).')}
                 ${field('Language', inp('language', s.language, 'placeholder="en" style="max-width:120px"'))}</div>
                 ${field('Template variables <span class="hint-inline">(separate with |)</span>', inp('params', s.params, 'placeholder="{{first_name}} | {{company}}"'))}`
