@@ -429,6 +429,9 @@ func TestAutoReplyAndWebhooks(t *testing.T) {
 	if err != nil || out["contact"] != "eve@epsilon.io" {
 		t.Fatalf("generic webhook: %v %v", out, err)
 	}
+	if err := e.svc.UpdateSettings(ctx, map[string]any{"chatdaddy_enabled": true}); err != nil {
+		t.Fatal(err)
+	}
 	out, err = e.svc.HandleWebhook(ctx, map[string]string{"k": secret, "src": "chatdaddy"}, []byte(`{"event":"message-insert","data":[
 		{"id":"wa1","chatId":"60123456789@s.whatsapp.net","text":"Hi from WhatsApp","sender":{"name":"Eve"}},
 		{"id":"wa2","chatId":"123@g.us","text":"group"},{"id":"wa3","fromMe":true,"chatId":"601"}]}`))

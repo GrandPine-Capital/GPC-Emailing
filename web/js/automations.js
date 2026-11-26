@@ -243,9 +243,12 @@
             <label class="check"><input type="checkbox" data-k="reply_in_thread" ${s.reply_in_thread ? 'checked' : ''}> Send as a reply in the same email thread ("Re: …")</label>`;
         case 'send_whatsapp': {
           const provider = s.provider || '';
-          const dflt = settings.whatsapp_provider || 'gpc_whatsapp';
-          const templ = (provider || dflt) !== 'chatdaddy';
-          return field('Send with', `<select data-k="provider"><option value="">Default (${{ cloud: 'WhatsApp Cloud API', chatdaddy: 'ChatDaddy' }[dflt] || 'GPC-WhatsApp'})</option><option value="gpc_whatsapp" ${provider === 'gpc_whatsapp' ? 'selected' : ''}>GPC-WhatsApp</option><option value="chatdaddy" ${provider === 'chatdaddy' ? 'selected' : ''}>ChatDaddy</option><option value="cloud" ${provider === 'cloud' ? 'selected' : ''}>WhatsApp Cloud API</option></select>`) +
+          const cdOn = !!settings.chatdaddy_enabled;
+          const dflt = settings.whatsapp_provider === 'chatdaddy' && !cdOn ? 'gpc_whatsapp' : (settings.whatsapp_provider || 'gpc_whatsapp');
+          const templ = (provider === 'chatdaddy' && !cdOn ? 'gpc_whatsapp' : (provider || dflt)) !== 'chatdaddy';
+          const cdOpt = cdOn ? `<option value="chatdaddy" ${provider === 'chatdaddy' ? 'selected' : ''}>ChatDaddy</option>`
+            : (provider === 'chatdaddy' ? '<option value="chatdaddy" selected>ChatDaddy (switched off — sends via GPC-WhatsApp)</option>' : '');
+          return field('Send with', `<select data-k="provider"><option value="">Default (${{ cloud: 'WhatsApp Cloud API', chatdaddy: 'ChatDaddy' }[dflt] || 'GPC-WhatsApp'})</option><option value="gpc_whatsapp" ${provider === 'gpc_whatsapp' ? 'selected' : ''}>GPC-WhatsApp</option>${cdOpt}<option value="cloud" ${provider === 'cloud' ? 'selected' : ''}>WhatsApp Cloud API</option></select>`) +
             (templ
               ? `<div class="row">${field('Approved template name', inp('template_name', s.template_name, 'placeholder="follow_up"'), 'Meta requires an approved template to start a conversation. Leave empty to send the text below (only within 24h of their last message).')}
                 ${field('Language', inp('language', s.language, 'placeholder="en" style="max-width:120px"'))}</div>
@@ -255,7 +258,7 @@
               <div class="hint">Sent to the contact's phone number (local numbers use the default country code from Settings).</div></div>`;
         }
         case 'chatdaddy_contact':
-          return field('Tags to add in ChatDaddy', inp('tags', s.tags, 'placeholder="email-lead, {{company}}"'), 'Comma separated; merge tags allowed.') +
+          return (settings.chatdaddy_enabled ? '' : '<p class="muted" style="margin:0 0 12px">ChatDaddy is switched off (Settings → Integrations): this step is skipped.</p>') + field('Tags to add in ChatDaddy', inp('tags', s.tags, 'placeholder="email-lead, {{company}}"'), 'Comma separated; merge tags allowed.') +
             `<label class="check"><input type="checkbox" data-k="include_contact_tags" ${s.include_contact_tags ? 'checked' : ''}> Also copy the contact's tags from this portal</label>`;
         case 'wait':
           return `<div class="row"><div class="field" style="max-width:140px">${App.fieldLabel('Wait')}<input type="number" min="0" data-k="amount" value="${esc(s.amount ?? 1)}"></div>
@@ -369,7 +372,7 @@
 
     function stepPicker(index) {
       modal(`<div class="row" style="align-items:center;margin-bottom:16px"><h2 style="margin:0;flex:1">Add a step</h2><button class="btn icon ghost" data-close>${icon('x', 18)}</button></div>
-        ${groups(C().STEP_TYPES).map(([g, items]) => `<div class="picker-group"><h3>${esc(g)}</h3><div class="picker-grid">${items.map(([k, v]) => `
+        ${groups(Object.fromEntries(Object.entries(C().STEP_TYPES).filter(([k]) => k !== 'chatdaddy_contact' || settings.chatdaddy_enabled))).map(([g, items]) => `<div class="picker-group"><h3>${esc(g)}</h3><div class="picker-grid">${items.map(([k, v]) => `
           <button type="button" class="pick" data-type="${k}"><div class="icon-tile sm ${toneFor(v.group)}">${icon(v.icon, 16)}</div><div><div class="p-t">${esc(v.label)}</div><div class="p-d">${esc(v.description)}</div></div></button>`).join('')}</div></div>`).join('')}`, {
         wide: true,
         onMount: (el, close) => el.querySelectorAll('[data-type]').forEach((b) => (b.onclick = () => {
