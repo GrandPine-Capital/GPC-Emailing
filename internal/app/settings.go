@@ -56,7 +56,7 @@ func defaultSettings() Settings {
 }
 
 // SecretKeys are the integration secrets admins may set; they are stored sealed.
-var SecretKeys = []string{"hunter_api_key", "apollo_api_key", "google_cse_key", "google_cse_cx", "chatdaddy_token", "whatsapp_token", "gpc_whatsapp_key", "crm_hook_secret"}
+var SecretKeys = []string{"hunter_api_key", "apollo_api_key", "google_cse_key", "google_cse_cx", "chatdaddy_token", "whatsapp_token", "gpc_whatsapp_key", "crm_hook_secret", "gpc_whatsapp_webhook_secret"}
 
 var textSettings = map[string]bool{
 	"from_name": true, "reply_to": true, "company_address": true, "crawler_user_agent": true, "default_from_email": true,
@@ -182,7 +182,7 @@ func (s *Service) SettingsView(ctx context.Context, admin bool) (map[string]any,
 		out[k] = ""
 	}
 	out["webhook_secret"] = ""
-	out["chatdaddy_webhook_url"], out["generic_webhook_url"] = "", ""
+	out["chatdaddy_webhook_url"], out["generic_webhook_url"], out["gpc_whatsapp_webhook_url"] = "", "", ""
 	if admin {
 		sec := s.Secrets(ctx)
 		for _, k := range SecretKeys {
@@ -195,6 +195,7 @@ func (s *Service) SettingsView(ctx context.Context, admin bool) (map[string]any,
 		out["webhook_secret"] = hook
 		out["chatdaddy_webhook_url"] = s.baseURL + "/hook?src=chatdaddy&k=" + hook
 		out["generic_webhook_url"] = s.baseURL + "/hook?k=" + hook
+		out["gpc_whatsapp_webhook_url"] = s.baseURL + "/hooks/whatsapp"
 	}
 	return out, nil
 }

@@ -123,6 +123,26 @@ message; a 400, 401, 403 or 404 fails at once, anything else is retried like e-m
 for SES. The CRM (GPC-Lead) can send its own WhatsApp on payment events: switch that off before ticking
 these, or buyers get two.
 
+### GPC-WhatsApp's webhook: replies and delivery status
+
+`POST /hooks/whatsapp` receives GPC-WhatsApp's outbound webhooks (header `X-GPC-Signature: sha256=<hex
+HMAC-SHA256 of the raw body>`, header `X-GPC-Event`), signed with the admin setting
+`gpc_whatsapp_webhook_secret` (Settings → Integrations → GPC WhatsApp, write-only, with this route's full
+URL shown beside it). In GPC-WhatsApp create a webhook for `message.received` and `message.status` with
+that URL and secret. Secret unset: 503; bad, missing or unprefixed signature: 401; body over 256 KB or not
+JSON: 400. Anything validly signed gets a 200, including events not used here, because the platform does
+not retry and switches a webhook off after 20 failures in a row.
+
+- `message.received` is handled like the ChatDaddy webhook: the sender's number is matched on `phone_key`
+  (an unknown number becomes a contact with source `whatsapp`), one `replies` row per platform message id
+  (a repeated delivery is recorded once), the `whatsapp_received` trigger fires and `stop_if: replied`
+  steps stop.
+- `message.status` finds the send by the platform's message id: `transactional.provider_id` (payment and
+  Keycloak notices) or `whatsapp.id = 'wa-<id>'` (automations). `failed` marks the transactional row
+  `failed` with the error shown on the Transactional page; it is not resent by itself (use Resend).
+  `delivered`, `read` and an automation send's failure are acknowledged and not stored (there is no column
+  for them). An unknown id answers `{"ok":true,"ignored":"unknown message"}`.
+
 ### The CRM's contact sync and e-mails
 
 The CRM (GPC-Lead, crm.grandpine.com) is the master of customer records and posts to two routes,
