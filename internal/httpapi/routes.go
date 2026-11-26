@@ -391,7 +391,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 		if text == "" {
 			text = "Test message from GPC Emailing ✅"
 		}
-		err := svc.SendWhatsApp(r.Context(), sv(b["phone"]), app.WhatsAppOpts{Provider: sv(b["provider"]), Text: text})
+		_, err := svc.SendWhatsApp(r.Context(), sv(b["phone"]), app.WhatsAppOpts{Provider: sv(b["provider"]), Text: text})
 		if err != nil {
 			err = app.UserError{Msg: err.Error()}
 		}

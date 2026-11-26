@@ -185,17 +185,18 @@
         </section>
 
         <section class="card">
-          ${cardHead({ icon: 'whatsapp', tone: 'wa', title: 'WhatsApp & ChatDaddy', sub: 'Send WhatsApp messages from automations', aside: (s.chatdaddy_token || s.whatsapp_token) ? '<span class="badge green lg"><span class="dot"></span>Connected</span>' : '<span class="badge lg">Not set up</span>' })}
+          ${cardHead({ icon: 'whatsapp', tone: 'wa', title: 'WhatsApp for automations', sub: 'Which service sends the WhatsApp messages of automations', aside: ((s.whatsapp_provider || 'gpc_whatsapp') === 'gpc_whatsapp' ? (s.gpc_whatsapp_url && s.gpc_whatsapp_key) : (s.chatdaddy_token || s.whatsapp_token)) ? '<span class="badge green lg"><span class="dot"></span>Connected</span>' : '<span class="badge lg">Not set up</span>' })}
           <div class="row">
             <div class="field">${fieldLabel('Default provider')}<select name="whatsapp_provider">
-              <option value="chatdaddy" ${s.whatsapp_provider !== 'cloud' ? 'selected' : ''}>ChatDaddy</option>
-              <option value="cloud" ${s.whatsapp_provider === 'cloud' ? 'selected' : ''}>WhatsApp Cloud API (Meta)</option></select></div>
+              <option value="gpc_whatsapp" ${(s.whatsapp_provider || 'gpc_whatsapp') === 'gpc_whatsapp' ? 'selected' : ''}>GPC-WhatsApp (recommended)</option>
+              <option value="chatdaddy" ${s.whatsapp_provider === 'chatdaddy' ? 'selected' : ''}>ChatDaddy (fallback)</option>
+              <option value="cloud" ${s.whatsapp_provider === 'cloud' ? 'selected' : ''}>WhatsApp Cloud API (Meta, fallback)</option></select></div>
             <div class="field">${fieldLabel('Default country code', 'for local numbers')}${input('default_country_code', s.default_country_code, { placeholder: 'e.g. 60 for Malaysia', suffix: '' })}</div>
           </div>
-          <h3 style="margin-top:4px">ChatDaddy</h3>
+          <h3 style="margin-top:4px">ChatDaddy <span class="hint-inline" style="font-weight:400">(fallback)</span></h3>
           <div class="field">${fieldLabel('ChatDaddy API token', '<a href="https://app.chatdaddy.tech/settings/api" target="_blank" rel="noopener">app.chatdaddy.tech → Settings → API</a>')}${input('chatdaddy_token', s.chatdaddy_token, { secret: true, placeholder: 'API token with messages & contacts scopes' })}</div>
           <div class="field">${fieldLabel('ChatDaddy channel (account ID)', '"random" = any connected number')}${input('chatdaddy_account_id', s.chatdaddy_account_id || 'random', { mono: true })}</div>
-          <h3>WhatsApp Cloud API <span class="hint-inline" style="font-weight:400">(optional)</span></h3>
+          <h3>WhatsApp Cloud API <span class="hint-inline" style="font-weight:400">(fallback)</span></h3>
           <div class="row">
             <div class="field">${fieldLabel('Phone number ID')}${input('whatsapp_phone_number_id', s.whatsapp_phone_number_id, { mono: true, placeholder: '1234567890' })}</div>
             <div class="field" style="max-width:150px">${fieldLabel('Template language')}${input('whatsapp_template_language', s.whatsapp_template_language || 'en', { mono: true })}</div>
@@ -207,8 +208,10 @@
         </section>
 
         <section class="card">
-          ${cardHead({ icon: 'whatsapp', tone: 'wa', title: 'GPC WhatsApp', sub: 'Payment WhatsApp messages (Transactional page)', aside: (s.gpc_whatsapp_url && s.gpc_whatsapp_key) ? '<span class="badge green lg"><span class="dot"></span>Connected</span>' : '<span class="badge lg">Not set up</span>' })}
+          ${cardHead({ icon: 'whatsapp', tone: 'wa', title: 'GPC WhatsApp', sub: 'The company platform: automations and payment WhatsApp messages (Transactional page)', aside: (s.gpc_whatsapp_url && s.gpc_whatsapp_key) ? '<span class="badge green lg"><span class="dot"></span>Connected</span>' : '<span class="badge lg">Not set up</span>' })}
           <div class="field">${fieldLabel('Platform address')}${input('gpc_whatsapp_url', s.gpc_whatsapp_url, { mono: true, placeholder: 'https://whatsapp.grandpine.com' })}</div>
+          <div class="field">${fieldLabel('Channel for automations', 'blank = the company default number')}${input('gpc_whatsapp_channel', s.gpc_whatsapp_channel, { mono: true, placeholder: 'blank, personal, or a channel id' })}
+            <div class="hint"><b>personal</b> is the company's free personal number (text only, no templates). A channel id sends from that number; ids are listed on the Transactional page.</div></div>
           <div class="field">${fieldLabel('API key', 'GPC WhatsApp → API keys')}${input('gpc_whatsapp_key', s.gpc_whatsapp_key, { secret: true, placeholder: 'gpc_live_…' })}
             <div class="hint">Create the key in the company's GPC WhatsApp console with the scopes <b>read</b> and <b>messages:write</b>. Messages sent this way appear in that inbox, and its opt-outs and daily limits apply.</div></div>
         </section>
