@@ -2,6 +2,7 @@
 -- setting crm_hook_secret). Edit the wording in the dashboard; keep the keys. Merge tags:
 -- first_name, full_name, product, amount, currency, reference, company_address; the owner alert
 -- (staff only) is just {{subject}} and {{body}}, which the CRM writes (HTML-escaped on merge).
+-- Safe to run where the same rows already exist (the staging copy of this file is V12).
 -- All four events are on by default: nothing is stored in the settings for that.
 INSERT INTO templates (id, key, name, category, mode, subject, html, is_standard) VALUES
 ('txn-crm-payment-failed', 'crm_payment_failed', 'CRM: payment failed', 'transactional', 'html',
@@ -90,4 +91,5 @@ $$<!DOCTYPE html>
 </td></tr>
 <tr><td style="padding:16px 32px 28px;font-size:12px;color:#9ca3af;">{{company_address}}</td></tr>
 </table></td></tr></table>
-</body></html>$$, false);
+</body></html>$$, false)
+ON CONFLICT DO NOTHING;
