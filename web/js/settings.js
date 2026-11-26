@@ -198,6 +198,9 @@
             <div class="hint">Create the key in the company's GPC WhatsApp console with the scopes <b>read</b> and <b>messages:write</b>. Messages sent this way appear in that inbox, and its opt-outs and daily limits apply.</div></div>
           <div class="field">${fieldLabel('CRM hook secret', 'crm.grandpine.com')}${input('crm_hook_secret', s.crm_hook_secret, { secret: true, placeholder: 'a long random string' })}
             <div class="hint">The CRM signs its contact sync and e-mail events with this.</div></div>
+          <div class="field">${fieldLabel('Webhook secret', 'GPC WhatsApp → Integrations → Outbound webhooks')}${input('gpc_whatsapp_webhook_secret', s.gpc_whatsapp_webhook_secret, { secret: true, placeholder: 'the webhook\'s signing secret' })}
+            <input type="text" class="mono" id="gw_hook" value="${esc(s.gpc_whatsapp_webhook_url || (admin ? '' : 'Admins only'))}" readonly style="margin-top:8px">
+            <div class="hint">Create a webhook in GPC-WhatsApp for message.received and message.status with this URL and secret</div></div>
         </section>
 
         <section class="card">
