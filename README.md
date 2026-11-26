@@ -140,10 +140,21 @@ the saved value wins. The settings form posts the effective value, so saving oth
 
 ### The CRM's contact sync and e-mails
 
-The CRM (GPC-Lead, crm.grandpine.com) is the master of customer records and posts to two routes,
-both signed with header `sig` = lowercase hex HMAC-SHA256 of the raw body with the admin setting
-`crm_hook_secret` (Settings → Integrations, write-only; no env var). Secret unset: 503; bad or missing
-signature: 401; malformed body: 400. Unsubscribe state and the send log stay only here.
+The CRM (GPC-Lead, crm.grandpine.com) is the master of customer records and posts to three routes,
+all signed with header `sig` = lowercase hex HMAC-SHA256 of the raw body with the admin setting
+`crm_hook_secret`. Secret unset: 503; bad or missing signature: 401; malformed body: 400.
+Unsubscribe state and the send log stay only here.
+
+To connect the two, an administrator opens **Settings → Integrations → CRM (GPC-Lead)** here. The
+card shows the address to enter in the CRM (this service's public base URL, with a copy button) and
+the **Signing secret**: press Generate (or type your own), copy it, paste it into the CRM under
+Admin → Settings → Customer sync and e-mail channel → Signing secret, and save here. The same
+secret must be in both. After saving it is hidden, and the card says Connected. The card also shows
+the time and kind of the last signed call the CRM made. There is no env var.
+
+**`POST /hooks/crm/ping`** (body up to 4 KB, any small JSON such as `{"ping":true}`) is a
+connection test: with a good signature it answers `200 {"ok":true,"service":"gpc-emailing"}` and
+changes nothing else. Every signed call (ping, contacts, events) is noted as the "last call".
 
 **`POST /hooks/crm/contacts`** (body up to 2 MB, at most 500 contacts) is a quiet one-way sync:
 

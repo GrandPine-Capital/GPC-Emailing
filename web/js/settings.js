@@ -44,6 +44,8 @@
     const sesAcct = mail.account || {};
     const st = s.status || {};
     const admin = !!s.can_edit;
+    const lastCall = s.crm_last_call;
+    const crmKinds = { contacts: 'contacts sync', event: 'e-mail event', ping: 'connection test' };
     const remaining = meta.remainingToday ?? s.daily_limit ?? 100;
     const providers = 1 + ['hunter_api_key', 'apollo_api_key', 'google_cse_key'].filter((k) => s[k]).length;
     const workerBadge = !mail.configured
@@ -200,11 +202,18 @@
             <div class="hint"><b>personal</b> is the company's free personal number (text only, no templates). A channel id sends from that number; ids are listed on the Transactional page.</div></div>
           <div class="field">${fieldLabel('API key', 'GPC WhatsApp → API keys')}${input('gpc_whatsapp_key', s.gpc_whatsapp_key, { secret: true, placeholder: 'gpc_live_…' })}
             <div class="hint">Create the key in the company's GPC WhatsApp console with the scopes <b>read</b> and <b>messages:write</b>. Messages sent this way appear in that inbox, and its opt-outs and daily limits apply.</div></div>
-          <div class="field">${fieldLabel('CRM hook secret', 'crm.grandpine.com')}${input('crm_hook_secret', s.crm_hook_secret, { secret: true, placeholder: 'a long random string' })}
-            <div class="hint">The CRM signs its contact sync and e-mail events with this.</div></div>
           <div class="field">${fieldLabel('Webhook secret', 'GPC WhatsApp → Integrations → Outbound webhooks')}${input('gpc_whatsapp_webhook_secret', s.gpc_whatsapp_webhook_secret, { secret: true, placeholder: 'the webhook\'s signing secret' })}
             <input type="text" class="mono" id="gw_hook" value="${esc(s.gpc_whatsapp_webhook_url || (admin ? '' : 'Admins only'))}" readonly style="margin-top:8px">
             <div class="hint">Create a webhook in GPC-WhatsApp for message.received and message.status with this URL and secret</div></div>
+        </section>
+
+        <section class="card">
+          ${cardHead({ icon: 'webhook', tone: 'gray', title: 'CRM (GPC-Lead)', sub: 'The CRM pushes its customers here and asks for its notification e-mails', aside: s.crm_hook_connected ? '<span class="badge green lg"><span class="dot"></span>Connected</span>' : '<span class="badge lg">Not set up</span>' })}
+          <div class="field">${fieldLabel('Address to enter in the CRM')}${input('crm_hook_base_url', s.crm_hook_base_url || (admin ? '' : 'Admins only'), { mono: true, readonly: true, copy: true })}</div>
+          <div class="field">${fieldLabel('Signing secret', 'must be the same in the CRM')}
+            <div class="row" style="gap:8px;align-items:center"><div style="flex:1">${input('crm_hook_secret', s.crm_hook_secret, { secret: true, placeholder: 'a long random string' })}</div>${admin ? `<button type="button" class="btn" id="crm-gen">${icon('refresh', 16)}Generate</button><button type="button" class="btn" id="crm-copy" hidden>${icon('copy', 16)}Copy</button>` : ''}</div>
+            <div class="hint" id="crm-gen-hint" hidden>Copy it now and paste it into the CRM (Admin → Settings → Customer sync and e-mail channel → Signing secret), then Save here. After saving it is hidden.</div></div>
+          ${lastCall ? `<div class="hint" id="crm-last">Last call from the CRM: <b>${esc(fmtDate(lastCall.at))}</b> — ${esc(crmKinds[lastCall.kind] || lastCall.kind)}</div>` : ''}
         </section>
 
         <section class="card">
@@ -240,6 +249,22 @@
       const el = form.querySelector(`[name="${b.dataset.copyFrom}"]`) || form.querySelector(`#${b.dataset.copyFrom}`);
       copy(el && el.value);
     }));
+
+    // CRM card: Generate fills the signing secret with a fresh random value and shows it in clear text.
+    const gen = form.querySelector('#crm-gen');
+    if (gen) gen.onclick = () => {
+      const inp = form.querySelector('[name=crm_hook_secret]');
+      inp.type = 'text';
+      inp.value = window.EmailSecrets.generateSecret((a) => crypto.getRandomValues(a));
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+      const eye = inp.parentElement.querySelector('[data-reveal]');
+      if (eye) eye.innerHTML = icon('eye-off', 18);
+      form.querySelector('#crm-gen-hint').hidden = false;
+      form.querySelector('#crm-copy').hidden = false;
+      copy(inp.value);
+    };
+    const crmCopy = form.querySelector('#crm-copy');
+    if (crmCopy) crmCopy.onclick = () => copy(form.querySelector('[name=crm_hook_secret]').value);
 
     // "Use ChatDaddy": the switch shows or hides the ChatDaddy fields and its place in the provider picker
     // (the fields stay in the form, so their values are still posted).

@@ -187,7 +187,9 @@ func (s *Service) SettingsView(ctx context.Context, admin bool) (map[string]any,
 		out[k] = ""
 	}
 	out["webhook_secret"] = ""
+	out["crm_hook_connected"] = s.Secrets(ctx)["crm_hook_secret"] != ""
 	out["chatdaddy_webhook_url"], out["generic_webhook_url"], out["gpc_whatsapp_webhook_url"] = "", "", ""
+	out["crm_hook_base_url"], out["crm_last_call"] = "", nil
 	if admin {
 		sec := s.Secrets(ctx)
 		for _, k := range SecretKeys {
@@ -201,6 +203,10 @@ func (s *Service) SettingsView(ctx context.Context, admin bool) (map[string]any,
 		out["chatdaddy_webhook_url"] = s.baseURL + "/hook?src=chatdaddy&k=" + hook
 		out["generic_webhook_url"] = s.baseURL + "/hook?k=" + hook
 		out["gpc_whatsapp_webhook_url"] = s.baseURL + "/hooks/whatsapp"
+		out["crm_hook_base_url"] = s.baseURL
+		if d := s.doc(ctx, "crm_hook"); d["last_call_at"] != nil {
+			out["crm_last_call"] = map[string]any{"at": d["last_call_at"], "kind": d["last_call_kind"]}
+		}
 	}
 	return out, nil
 }

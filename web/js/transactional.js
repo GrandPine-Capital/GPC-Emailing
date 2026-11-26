@@ -65,7 +65,7 @@
       })}
       ${cfg.payment_hook ? '' : '<div class="banner warn">Payment events are not connected on this server (PAYMENT_EVENT_SECRET), so nothing here is sent yet.</div>'}
       ${cfg.keycloak_hook ? '' : '<div class="banner">The Keycloak emails below are not connected on this server (KEYCLOAK_EVENT_SECRET): Keycloak sends its own account emails.</div>'}
-      ${cfg.crm_hook ? '' : '<div class="banner">The CRM emails below are not connected: set the CRM hook secret in <a href="#/settings">Settings → Integrations</a>.</div>'}
+      ${cfg.crm_hook ? '' : '<div class="banner">The CRM emails below are not connected: set the signing secret in <a href="#/settings">Settings → Integrations → CRM (GPC-Lead)</a>.</div>'}
       ${hasWhatsApp && !cfg.whatsapp_connected ? '<div class="banner">To send these on WhatsApp too, connect GPC WhatsApp in <a href="#/settings">Settings → Integrations</a>.</div>' : ''}
       <form id="txn" data-nosubmit autocomplete="off">
       <div class="grid cols-2" style="margin-bottom:24px">
