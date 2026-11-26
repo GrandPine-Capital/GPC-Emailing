@@ -15,6 +15,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/grandpine-capital/gpc-emailing/internal/secretbox"
@@ -39,6 +40,9 @@ type Service struct {
 	Now func() time.Time
 
 	wake chan struct{}
+
+	// waHookMu serialises the automatic GPC-WhatsApp webhook set-up.
+	waHookMu sync.Mutex
 
 	// PaymentEventSecret verifies GPC-Payment's signed events (PAYMENT_EVENT_SECRET); empty
 	// turns the hook off.

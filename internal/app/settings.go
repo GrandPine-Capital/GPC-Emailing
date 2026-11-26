@@ -187,6 +187,7 @@ func (s *Service) SettingsView(ctx context.Context, admin bool) (map[string]any,
 		out[k] = ""
 	}
 	out["webhook_secret"] = ""
+	out["gpc_whatsapp_webhook"] = map[string]any{}
 	out["crm_hook_connected"] = s.Secrets(ctx)["crm_hook_secret"] != ""
 	out["chatdaddy_webhook_url"], out["generic_webhook_url"], out["gpc_whatsapp_webhook_url"] = "", "", ""
 	out["crm_hook_base_url"], out["crm_last_call"] = "", nil
@@ -195,6 +196,10 @@ func (s *Service) SettingsView(ctx context.Context, admin bool) (map[string]any,
 		for _, k := range SecretKeys {
 			out[k] = sec[k]
 		}
+		// The webhook's signing secret is never sent back, even to admins (it may have been
+		// created automatically and nobody needs to see it): its status is.
+		out["gpc_whatsapp_webhook_secret"] = ""
+		out["gpc_whatsapp_webhook"] = s.WhatsAppHookStatus(ctx)
 		hook, err := s.WebhookSecret(ctx)
 		if err != nil {
 			return nil, err
@@ -224,6 +229,12 @@ func (s *Service) UpdateSettings(ctx context.Context, in map[string]any) error {
 	sec := map[string]string{}
 	for k, v := range in {
 		switch {
+		case k == "gpc_whatsapp_webhook_secret":
+			// The form posts the field back empty on every save (GET never shows it): empty
+			// means unchanged. A secret typed by hand replaces any automatic one.
+			if v := strings.TrimSpace(str(v)); v != "" {
+				sec[k] = v
+			}
 		case contains(SecretKeys, k):
 			sec[k] = strings.TrimSpace(str(v))
 		case k == "daily_limit" || k == "per_run_limit":
@@ -260,6 +271,7 @@ func (s *Service) UpdateSettings(ctx context.Context, in map[string]any) error {
 			}
 		}
 	}
+	before := s.Settings(ctx).GPCWhatsAppURL
 	if err := s.mergeDoc(ctx, s.db.Pool, "app", app); err != nil {
 		return err
 	}
@@ -268,10 +280,23 @@ func (s *Service) UpdateSettings(ctx context.Context, in map[string]any) error {
 		if err != nil {
 			return err
 		}
+		oldKey := cur["gpc_whatsapp_key"]
 		for k, v := range sec {
 			cur[k] = v
 		}
-		return s.writeSealed(ctx, "secrets", cur)
+		if err := s.writeSealed(ctx, "secrets", cur); err != nil {
+			return err
+		}
+		if sec["gpc_whatsapp_webhook_secret"] != "" {
+			_ = s.mergeDoc(ctx, s.db.Pool, waHookDoc, map[string]any{"state": "manual", "reason": ""})
+		}
+		if k, ok := sec["gpc_whatsapp_key"]; ok && k != oldKey {
+			s.EnsureWhatsAppWebhook(ctx)
+			return nil
+		}
+	}
+	if u, ok := app["gpc_whatsapp_url"].(string); ok && u != before {
+		s.EnsureWhatsAppWebhook(ctx)
 	}
 	return nil
 }
