@@ -111,10 +111,20 @@ these, or buyers get two.
 ### GPC-WhatsApp's webhook: replies and delivery status
 
 `POST /hooks/whatsapp` receives GPC-WhatsApp's outbound webhooks (header `X-GPC-Signature: sha256=<hex
-HMAC-SHA256 of the raw body>`, header `X-GPC-Event`), signed with the admin setting
-`gpc_whatsapp_webhook_secret` (Settings → Integrations → GPC WhatsApp, write-only, with this route's full
-URL shown beside it). In GPC-WhatsApp create a webhook for `message.received` and `message.status` with
-that URL and secret. Secret unset: 503; bad, missing or unprefixed signature: 401; body over 256 KB or not
+HMAC-SHA256 of the raw body>`, header `X-GPC-Event`), signed with the secret `gpc_whatsapp_webhook_secret`.
+
+**Automatic set-up.** Once the platform address and API key are saved (Settings → Integrations → GPC
+WhatsApp) and no secret is stored, this service creates its own webhook there (`GET /api/v1/me`, then
+`POST /api/v1/webhooks` for `<PUBLIC_BASE_URL>/hooks/whatsapp` with the events `message.received` and
+`message.status`) and stores the returned signing secret itself. The API key needs the scope
+`webhooks:write` (or `*`); without it the card says so and nothing is created. An older webhook with exactly
+this URL is deleted first (its secret cannot be read back); webhooks with other URLs are never touched. It
+runs when the connection is saved, from the "Connect replies now" button, and from the worker at most every
+30 minutes while it is not connected. The progress (`connected`, `needs_scope`, `failed`, `no_url`) is the
+settings document `wa_webhook`, shown on the card; it never holds the key or the secret, and GET /settings
+never returns the webhook secret. **Manual fallback:** create the webhook in GPC-WhatsApp yourself and paste
+its secret under "Enter a secret by hand" (write-only; empty keeps the current one). A stored secret, typed or
+automatic, stops the automatic set-up. Secret unset: 503; bad, missing or unprefixed signature: 401; body over 256 KB or not
 JSON: 400. Anything validly signed gets a 200, including events not used here, because the platform does
 not retry and switches a webhook off after 20 failures in a row.
 

@@ -59,6 +59,9 @@ func (s *Service) Tick(ctx context.Context, maxDur time.Duration) (map[string]an
 	step("replies", func() (int, error) { return s.processInbound(ctx, hasTime) })
 	step("automations", func() (int, error) { return s.processDue(ctx, hasTime) })
 	step("leads", func() (int, error) { return s.processLeads(ctx, hasTime) })
+	if hasTime() {
+		s.ensureWhatsAppWebhookDue(ctx)
+	}
 	b, _ := json.Marshal(summary)
 	s.noteStatus(ctx, map[string]any{
 		"last_tick": s.now().Format(time.RFC3339), "account": s.Account(ctx), "remaining_today": s.RemainingToday(ctx),
