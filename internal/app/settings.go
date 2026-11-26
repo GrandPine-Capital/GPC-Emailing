@@ -47,7 +47,7 @@ func defaultSettings() Settings {
 }
 
 // SecretKeys are the integration secrets admins may set; they are stored sealed.
-var SecretKeys = []string{"hunter_api_key", "apollo_api_key", "google_cse_key", "google_cse_cx", "chatdaddy_token", "whatsapp_token", "gpc_whatsapp_key"}
+var SecretKeys = []string{"hunter_api_key", "apollo_api_key", "google_cse_key", "google_cse_cx", "chatdaddy_token", "whatsapp_token", "gpc_whatsapp_key", "crm_hook_secret"}
 
 var textSettings = map[string]bool{
 	"from_name": true, "reply_to": true, "company_address": true, "crawler_user_agent": true, "default_from_email": true,
