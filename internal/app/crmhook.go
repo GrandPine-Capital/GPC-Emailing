@@ -255,7 +255,7 @@ func (s *Service) HandleCRMEvent(ctx context.Context, sig string, body []byte) (
 	}
 	set := s.txnSettings(ctx).Events[ev.Type]
 	if set.Off {
-		return map[string]any{"ok": true, "ignored": te.Label + " is turned off (Transactional page)"}, nil
+		return map[string]any{"ok": true, "ignored": te.Label + " is turned off (Settings → Transactional e-mails)"}, nil
 	}
 	if !core.IsEmail(ev.To.Email) {
 		return map[string]any{"ok": true, "ignored": "no e-mail address"}, nil

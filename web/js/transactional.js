@@ -1,4 +1,4 @@
-/* Transactional e-mails: what other systems (GPC-Payment, Helpdesk, Keycloak) ask us to send to
+/* The Settings tab "Transactional e-mails" (the page used to be #/transactional): what other systems (GPC-Payment, Helpdesk, Keycloak) ask us to send to
    one person — receipts, bank-transfer instructions, refund notices, password-reset and
    verify-address e-mails. Which ones are on, the template each uses, the sender, each message's
    WhatsApp copy (through GPC WhatsApp), and everything sent, with resend. */
@@ -12,7 +12,7 @@
   };
 
   // ------------------------------------------------------------------ system & lifecycle e-mails
-  // The table at the bottom of Automations: every e-mail the system sends by itself (payment,
+  // The table in the Settings tab "Transactional e-mails" (it used to sit at the bottom of Automations): every e-mail the system sends by itself (payment,
   // Helpdesk and Keycloak events: on/off, template, WhatsApp copy), the Keycloak templates that
   // nothing sends yet, and the standard lifecycle flows still to be created as automations.
 
@@ -20,7 +20,7 @@
   const stageOf = (e) => (e.event === 'subscription.charge_upcoming' ? 'Trial' : STAGE[e.source] || 'Other');
 
   // Standard lifecycle flows. `event` is what the product posts to the webhook (Settings →
-  // Inbound webhooks) as {"email": "...", "event": "<event>"}; the automation starts on it.
+  // Integrations → Inbound webhooks) as {"email": "...", "event": "<event>"}; the automation starts on it.
   const LIFECYCLE = [
     { key: 'lc_signup_welcome', stage: 'Sign-up', title: 'Welcome a new sign-up', when: 'The product reports a new account', event: 'user_signed_up', tag: 'signed-up', tpl: 'Welcome Email' },
     { key: 'lc_optin_welcome', stage: 'Sign-up', title: 'Welcome a confirmed subscriber', when: 'Someone confirms a subscribe form (double opt-in)', trigger: 'subscription_confirmed', tag: 'subscriber', tpl: 'Welcome Email' },
@@ -159,7 +159,7 @@
         ${lifecycleRows}
       </tbody></table></div>
       ${admin ? `<div class="row" style="margin-top:16px;align-items:center;gap:12px"><button type="button" class="btn primary" id="sys-save">${icon('check', 16)}Save system emails</button><span class="muted" style="font-size:13px">Saves the On/Off, template and WhatsApp choices above.</span></div>` : ''}
-      <div class="inforow" style="margin-top:16px">${icon('info', 18)}<span>The lifecycle flows start when your product posts the event to the webhook in <a href="#/settings">Settings → Inbound webhooks</a>, for example <code>{"email":"jane@acme.com","first_name":"Jane","event":"trial_started"}</code>. The sender of the system emails and everything sent are on the <a href="#/transactional">Transactional</a> page.</span></div>
+      <div class="inforow" style="margin-top:16px">${icon('info', 18)}<span>The lifecycle flows start when your product posts the event to the webhook in <a href="#/settings/integrations">Settings → Integrations → Inbound webhooks</a>, for example <code>{"email":"jane@acme.com","first_name":"Jane","event":"trial_started"}</code>. The sender of the system emails is above this table and everything sent is below it.</span></div>
     </div>`;
 
     el.querySelectorAll('[data-toggle-row]').forEach((b) => (b.onclick = () => {
@@ -218,12 +218,13 @@
   }
   App.systemEmails = { mount: mountSystemEmails, lifecycleRecipe };
 
-  App.route(/^#\/transactional(?:\?(.*))?$/, async (root, qs) => {
+  /** Draws the tab into `root` (a panel of the Settings page); `qs` is the query string (q=…) of the address. */
+  async function render(root, qs) {
     const params = new URLSearchParams(qs || '');
     const q = params.get('q') || '';
     const admin = App.isAdmin();
-    const [cfg, templates, sent] = await Promise.all([
-      api.get('/transactional/config'), api.get('/templates'), api.get(`/transactional?limit=100${q ? `&q=${encodeURIComponent(q)}` : ''}`),
+    const [cfg, templates, sent, automations] = await Promise.all([
+      api.get('/transactional/config'), api.get('/templates'), api.get(`/transactional?limit=100${q ? `&q=${encodeURIComponent(q)}` : ''}`), api.get('/automations'),
     ]);
     const canWrite = App.me.role !== 'viewer';
     const label = Object.fromEntries(cfg.events.map((e) => [e.event, e.label]));
@@ -231,35 +232,34 @@
     const dis = admin ? '' : 'disabled';
 
     root.innerHTML = `
-      ${App.pageHead({
-        title: 'Transactional emails',
-        subtitle: 'Emails (and WhatsApp messages) other systems send to one person about their order or account: receipts, bank-transfer instructions, refunds, password resets. They go even to people who unsubscribed from marketing, and are not tracked.',
-        actions: admin ? `<button class="btn primary lg" id="save">${icon('check', 17)}Save sender</button>` : `<span class="badge yellow lg">Read-only (${esc(App.me.role)})</span>`,
-      })}
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px">
+        <p class="muted" style="margin:0;flex:1">Emails (and WhatsApp messages) other systems send to one person about their order or account: receipts, bank-transfer instructions, refunds, password resets. They go even to people who unsubscribed from marketing, and are not tracked.</p>
+        ${admin ? `<button class="btn primary lg" id="txn-save" style="flex-shrink:0">${icon('check', 17)}Save sender</button>` : `<span class="badge yellow lg">Read-only (${esc(App.me.role)})</span>`}
+      </div>
       ${cfg.payment_hook ? '' : '<div class="banner warn">Payment events are not connected on this server (PAYMENT_EVENT_SECRET), so nothing here is sent yet.</div>'}
       ${cfg.keycloak_hook ? '' : '<div class="banner">The Keycloak emails below are not connected on this server (KEYCLOAK_EVENT_SECRET): Keycloak sends its own account emails.</div>'}
-      ${cfg.crm_hook ? '' : '<div class="banner">The CRM emails below are not connected: set the signing secret in <a href="#/settings">Settings → Integrations → CRM (GPC-Lead)</a>.</div>'}
-      <div class="banner info"><span>Which of these emails are on, the template each uses and its WhatsApp copy are now set under <a href="#/automations"><b>Automations → System &amp; lifecycle emails</b></a>. This page keeps the sender and everything sent.</span></div>
+      ${cfg.crm_hook ? '' : '<div class="banner">The CRM emails below are not connected: set the signing secret in <a href="#/settings/integrations">Settings → Integrations → CRM (GPC-Lead)</a>.</div>'}
       <form id="txn" data-nosubmit autocomplete="off">
       <div class="grid cols-2" style="margin-bottom:24px">
         <section class="card">
           ${cardHead({ icon: 'mail', title: 'Sender', sub: 'Who these emails come from' })}
           <div class="field">${fieldLabel('From address', '<span class="aside chip-hint">empty = server default</span>')}
             <input type="email" name="from_email" value="${esc(cfg.from_email)}" placeholder="${esc(cfg.default_from_email || cfg.effective_from_email)}" ${dis}>
-            <div class="hint">Any address on a verified SES identity (Settings → Sender identities). Now sending as <b>${esc(cfg.effective_from_email)}</b>.
+            <div class="hint">Any address on a verified SES identity (<a href="#/settings/sending">Settings → Sending → Sender identities</a>). Now sending as <b>${esc(cfg.effective_from_email)}</b>.
               ${cfg.no_reply ? 'A no-reply address carries no reply address, so customers cannot reply.' : 'Replies come back through the reply domain and are forwarded to this mailbox.'}</div></div>
           <div class="field" style="margin-bottom:0">${fieldLabel('From name', '<span class="aside chip-hint">empty = server default</span>')}
             <input type="text" name="from_name" value="${esc(cfg.from_name)}" placeholder="${esc(cfg.effective_from_name || 'GrandPine Capital')}" ${dis}></div>
         </section>
         <section class="card">
           ${cardHead({ icon: 'info', tone: 'gray', title: 'How it works', sub: 'From GPC-Payment to the customer' })}
-          <p class="muted" style="margin-top:0">When an order changes in GPC-Payment, it tells Emailing, and the email below goes to the buyer's address straight away. Each email goes once per order; a failed send is retried for a few hours. Edit the wording in <a href="#/templates">Templates</a> — merge tags such as <code>{{item}}</code>, <code>{{amount}}</code>, <code>{{receipt_url}}</code> are listed in each template's starter text.</p>
+          <p class="muted" style="margin-top:0">When an order changes in GPC-Payment, it tells Emailing, and the matching email from the table below goes to the buyer's address straight away. Each email goes once per order; a failed send is retried for a few hours. Edit the wording in <a href="#/templates">Templates</a> — merge tags such as <code>{{item}}</code>, <code>{{amount}}</code>, <code>{{receipt_url}}</code> are listed in each template's starter text.</p>
           <p class="muted">A payment email can also go to the buyer's WhatsApp through GPC WhatsApp, where it shows in the inbox. It is off until you tick it: if the CRM still sends its own payment WhatsApp, switch that off first, or buyers get two.</p>
           <p class="muted" style="margin-bottom:0">Keycloak's account emails (new password, verify address) come here too. Switch one off and Keycloak sends its own email again; the same happens by itself whenever this server cannot send. Their WhatsApp message is only a notice that the email was sent, to the phone number on the account.</p>
         </section>
       </div>
       </form>
-      <div class="card">
+      <div id="sys-emails"></div>
+      <div class="card" style="margin-top:24px">
         ${cardHead({ icon: 'mail-open', tone: 'gray', title: 'Sent', sub: 'The latest 100; search by order number, account ID or email address' })}
         <form id="find" class="row" style="gap:8px;margin-bottom:16px;flex-wrap:nowrap" data-nosubmit>
           <input type="search" name="q" value="${esc(q)}" placeholder="Order number or email" style="flex:1;min-width:0;max-width:360px">
@@ -277,10 +277,13 @@
         </tbody></table></div>` : `<p class="muted">${q ? 'Nothing matches.' : 'Nothing sent yet.'}</p>`}
       </div>`;
 
+    // The system emails and the lifecycle flows, as one table: its own Save button, apart from the sender's.
+    const sys = root.querySelector('#sys-emails');
+    mountSystemEmails(sys, { automations, templates }).catch((err) => { sys.innerHTML = `<div class="card"><h2>System &amp; lifecycle emails</h2><p class="muted">${esc(err.message)}</p></div>`; });
     root.querySelector('#find').onsubmit = (ev) => {
       ev.preventDefault();
       const v = new FormData(ev.target).get('q').trim();
-      location.hash = v ? `#/transactional?q=${encodeURIComponent(v)}` : '#/transactional';
+      location.hash = window.SettingsTabs.hashFor('transactional', v ? `q=${encodeURIComponent(v)}` : '');
     };
     root.querySelectorAll('[data-resend]').forEach((b) => (b.onclick = async () => {
       b.disabled = true;
@@ -290,7 +293,7 @@
         App.navigate();
       } catch { b.disabled = false; }
     }));
-    const save = root.querySelector('#save');
+    const save = root.querySelector('#txn-save');
     if (save) save.onclick = async () => {
       const form = root.querySelector('#txn');
       save.disabled = true;
@@ -300,5 +303,12 @@
         App.navigate();
       } catch { save.disabled = false; }
     };
+  }
+
+  window.TransactionalPanel = { render };
+
+  // The page's old address now leads to its tab in Settings (the search, if any, goes with it).
+  App.route(/^#\/transactional(?:\?.*)?$/, async () => {
+    location.replace(window.SettingsTabs.legacyRedirect(location.hash));
   });
 })();
