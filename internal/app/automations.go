@@ -348,6 +348,10 @@ func (s *Service) executeStep(ctx context.Context, step map[string]any, run *Run
 			}
 		}
 		provider := s.whatsAppProvider(ctx, str(step["provider"]))
+		viaNote := provider
+		if s.chatDaddyChosen(ctx, str(step["provider"])) && provider == ProviderGPC {
+			viaNote = "GPC-WhatsApp (ChatDaddy is switched off)"
+		}
 		msgID, err := s.SendWhatsApp(ctx, s.contactPhone(ctx, c), WhatsAppOpts{Provider: provider, Text: text, Template: str(step["template_name"]), Language: str(step["language"]), Params: params,
 			Ref: run.ID, IdempotencyKey: fmt.Sprintf("emailing:%s#%d", run.ID, run.StepIndex)})
 		if err != nil {
@@ -366,13 +370,16 @@ func (s *Service) executeStep(ctx context.Context, step map[string]any, run *Run
 			logged = "template " + str(step["template_name"])
 		}
 		s.logWhatsApp(ctx, c, "out", logged, run.AutomationID, msgID)
-		note := "WhatsApp sent via " + provider
+		note := "WhatsApp sent via " + viaNote
 		if msgID != "" {
 			note += " (message " + msgID + ")"
 		}
 		return stepResult{note: note}, nil
 
 	case "chatdaddy_contact":
+		if !s.ChatDaddyOn(ctx) {
+			return stepResult{note: "ChatDaddy is switched off (Settings → Integrations): step skipped"}, nil
+		}
 		var tags []string
 		vars := s.whatsappVars(ctx, c)
 		for _, t := range strings.Split(str(step["tags"]), ",") {

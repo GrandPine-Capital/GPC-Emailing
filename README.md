@@ -143,6 +143,16 @@ not retry and switches a webhook off after 20 failures in a row.
   `delivered`, `read` and an automation send's failure are acknowledged and not stored (there is no column
   for them). An unknown id answers `{"ok":true,"ignored":"unknown message"}`.
 
+### The ChatDaddy switch
+
+ChatDaddy is the old WhatsApp provider; Settings → Integrations → *Use ChatDaddy* (`chatdaddy_enabled`) turns
+it on or off in one place. Off: nothing is sent to or accepted from ChatDaddy. A send that asks for ChatDaddy
+goes through GPC-WhatsApp instead (the run log says so), the *Sync contact to ChatDaddy* step is skipped, a
+`/hook?src=chatdaddy` call answers 200 `{"ok":true,"ignored":"ChatDaddy is switched off"}` and records nothing,
+and the test send follows the same rule. Never saved, the switch is on only if a ChatDaddy token is stored and
+the saved provider is `chatdaddy` (so a live installation keeps working on deploy), otherwise off; once saved,
+the saved value wins. The settings form posts the effective value, so saving other settings does not flip it.
+
 ### The CRM's contact sync and e-mails
 
 The CRM (GPC-Lead, crm.grandpine.com) is the master of customer records and posts to two routes,
